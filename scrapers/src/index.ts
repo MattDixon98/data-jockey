@@ -1,11 +1,12 @@
-import { scrapePage } from "./scraper.js";
+import { fetchRacecard } from "./scrapers/racecards.js";
+import { fetchRace } from "./scrapers/race.js";
 
-const targetUrl = process.env.TARGET_URL || "https://example.com";
+const yesterday = new Date();
+yesterday.setDate(yesterday.getDate() - 1);
 
-try {
-  const result = await scrapePage(targetUrl);
-  console.log("Scrape result:", result);
-} catch (error) {
-  console.error("Scraping failed:", error);
-  process.exit(1);
-}
+const searchDate = yesterday
+  .toISOString()
+  .split('T')[0];
+
+const raceCard = await fetchRacecard(searchDate);
+const race = await fetchRace("searchDate"); // To implement: Need to loop over the raceCard results and get `race_summary_reference.id`
