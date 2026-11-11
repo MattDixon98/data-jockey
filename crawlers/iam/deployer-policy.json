@@ -55,6 +55,34 @@
       "Resource": "arn:aws:iam::*:policy/data-jockey-*"
     },
     {
+      "Sid": "ManageGlueJobs",
+      "Effect": "Allow",
+      "Action": [
+        "glue:CreateJob",
+        "glue:UpdateJob",
+        "glue:DeleteJob",
+        "glue:GetJob",
+        "glue:GetTags",
+        "glue:TagResource",
+        "glue:UntagResource"
+      ],
+      "Resource": "arn:aws:glue:*:*:job/data-jockey-*"
+    },
+    {
+      "Sid": "ManageGlueDatabase",
+      "Effect": "Allow",
+      "Action": [
+        "glue:CreateDatabase",
+        "glue:UpdateDatabase",
+        "glue:DeleteDatabase",
+        "glue:GetDatabase"
+      ],
+      "Resource": [
+        "arn:aws:glue:*:*:catalog",
+        "arn:aws:glue:*:*:database/data_jockey"
+      ]
+    },
+    {
       "Sid": "ReadIamForConsolesAndPickers",
       "Effect": "Allow",
       "Action": [

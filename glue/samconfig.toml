@@ -1,0 +1,16 @@
+# Settings for `sam deploy` (no `sam build` needed: there's no code to compile,
+# and deploy uploads the job script itself).
+# The profile is pinned so deploys always go to the data-jockey AWS account.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "data-jockey-glue"
+region = "eu-west-2"
+profile = "data-jockey"
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+s3_prefix = "data-jockey-glue"
+confirm_changeset = false
+fail_on_empty_changeset = false
