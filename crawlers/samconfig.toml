@@ -1,0 +1,15 @@
+# Settings for `sam build` / `sam deploy` (run via `npm run deploy`).
+# The profile is pinned so deploys always go to the data-jockey AWS account.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "data-jockey-scraper"
+region = "eu-west-2"
+profile = "data-jockey"
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+s3_prefix = "data-jockey-scraper"
+confirm_changeset = false
+fail_on_empty_changeset = false

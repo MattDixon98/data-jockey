@@ -1,0 +1,84 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: data-jockey daily racecard + race scraper, saving raw JSON to S3
+
+Resources:
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+    # Keep the scraped data even if the stack is deleted.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: data-jockey-raw-2026-11-11
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ScraperFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ./
+      Handler: run-lambda.handler
+      Runtime: nodejs22.x
+      Architectures: [arm64]
+      MemorySize: 256
+      # ~100 races x (request + 0.5s delay) takes a few minutes; 15 min is Lambda's max.
+      Timeout: 900
+      Environment:
+        Variables:
+          S3_BUCKET: !Ref RawDataBucket
+      Policies:
+        - S3WritePolicy:
+            BucketName: !Ref RawDataBucket
+      # One run per date each morning (UK time), staggered 5 minutes apart so we
+      # don't hit the source site with five scrapes at once.
+      Events:
+        Yesterday:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(0 6 * * ? *)
+            ScheduleExpressionTimezone: Europe/London
+            Input: '{"offset": -1}'
+        Today:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(5 6 * * ? *)
+            ScheduleExpressionTimezone: Europe/London
+            Input: '{"offset": 0}'
+        Plus1:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(10 6 * * ? *)
+            ScheduleExpressionTimezone: Europe/London
+            Input: '{"offset": 1}'
+        Plus2:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(15 6 * * ? *)
+            ScheduleExpressionTimezone: Europe/London
+            Input: '{"offset": 2}'
+        Plus3:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: cron(20 6 * * ? *)
+            ScheduleExpressionTimezone: Europe/London
+            Input: '{"offset": 3}'
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints: [src/run-lambda.ts]
+        Format: esm
+        OutExtension: [.js=.mjs]
+        Target: es2022
+        # The AWS SDK is already included in the Lambda Node.js runtime.
+        External: ["@aws-sdk/*"]
+
+Outputs:
+  BucketName:
+    Description: S3 bucket holding the raw scraped JSON
+    Value: !Ref RawDataBucket
+  FunctionName:
+    Description: Lambda function name (use with `aws lambda invoke` to backfill dates)
+    Value: !Ref ScraperFunction
