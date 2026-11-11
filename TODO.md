@@ -2,17 +2,6 @@
 
 Local checklist, git-ignored. Tick items off with `[x]`.
 
-## Loose ends
-
-- [ ] Check the first scheduled crawl (12 Nov, 06:00–06:20 UK): `past/date=2026-11-11`, `today/date=2026-11-12` and new `future/` snapshots appear in S3
-- [ ] Push and merge `fix-django-dotenv` (adds `python-dotenv` to `backend/requirements.txt`)
-- [ ] Add `.gitattributes` (`* text=auto eol=lf`) at the repo root, run `git add --renormalize .`, then commit
-- [ ] GitHub: set up code scanning (CodeQL → Default)
-- [ ] GitHub: enable Dependabot alerts
-- [ ] GitHub: check secret scanning push protection is on (Settings → Advanced Security)
-- [ ] AWS: set a monthly budget alert (Billing → Budgets)
-- [ ] AWS: rotate the two exposed keys in the old account (651017486032): `matthew.dixon` (…JYJB) and `terraform-matthew.dixon-production` (…3ZEV); keep secrets only in `~/.aws/credentials`
-
 ## Still to build
 
 Roughly in order.
