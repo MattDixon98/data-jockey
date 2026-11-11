@@ -1,5 +1,7 @@
-export async function fetchRacecard(date: string) {
-  const url = `https://www.sportinglife.com/api/horse-racing/racing/racecards/${date}`;
+import type { RaceResponse } from "../models/race-response.model.js";
+
+export const fetchRace = async (raceId: number): Promise<RaceResponse> => {
+  const url = `https://www.sportinglife.com/api/horse-racing/race/${raceId}`;
 
   const response = await fetch(url, {
     headers: {
@@ -13,4 +15,4 @@ export async function fetchRacecard(date: string) {
   }
 
   return response.json();
-}
+};

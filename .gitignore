@@ -13,8 +13,12 @@ venv/
 
 # Node / TypeScript
 node_modules/
-.scrapers-cache/
+.crawlers-cache/
 *.tsbuildinfo
+crawlers/dist/
+
+# AWS SAM build output
+.aws-sam/
 
 # OS
 .DS_Store

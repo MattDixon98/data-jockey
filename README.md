@@ -3,12 +3,12 @@
 This repository is a lightweight starter structure for:
 
 - a Django-powered website frontend/backend
-- TypeScript-based web scrapers
+- TypeScript-based web crawlers
 
 ## Structure
 
 - `backend/` — Django project
-- `scrapers/` — TypeScript scraping scripts
+- `crawlers/` — TypeScript crawling scripts
 
 ## Quick start
 
@@ -23,10 +23,10 @@ python manage.py migrate
 python manage.py runserver
 ```
 
-### TypeScript scrapers
+### TypeScript crawlers
 
 ```bash
-cd scrapers
+cd crawlers
 npm install
 npm run dev
 ```
