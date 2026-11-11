@@ -1,0 +1,115 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: data-jockey Glue processing, turning raw JSON into Iceberg tables
+
+Parameters:
+  RawBucketName:
+    Type: String
+    Default: data-jockey-raw-2026-11-11
+    Description: Bucket the crawler stack writes raw JSON to (read-only here)
+
+Resources:
+  # Derived data only: everything in here can be rebuilt from the raw bucket.
+  WarehouseBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BucketName: !Sub data-jockey-clean-${AWS::AccountId}
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          # Glue scratch space and Spark UI logs don't need to stick around.
+          - Id: ExpireGlueTemp
+            Prefix: tmp/
+            Status: Enabled
+            ExpirationInDays: 7
+
+  Database:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: data_jockey
+        Description: Clean racing tables (Iceberg)
+        LocationUri: !Sub s3://${WarehouseBucket}/warehouse/data_jockey.db
+
+  # Role name is generated from the stack name (data-jockey-glue-...), which
+  # keeps it inside the deployer policy's data-jockey-* scope.
+  GlueJobRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # Catalog access, CloudWatch logs and metrics.
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: data-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadRaw
+                Effect: Allow
+                Action: [s3:GetObject, s3:ListBucket]
+                Resource:
+                  - !Sub arn:aws:s3:::${RawBucketName}
+                  - !Sub arn:aws:s3:::${RawBucketName}/*
+              - Sid: ReadWriteWarehouse
+                Effect: Allow
+                Action: [s3:GetObject, s3:PutObject, s3:DeleteObject, s3:ListBucket]
+                Resource:
+                  - !GetAtt WarehouseBucket.Arn
+                  - !Sub ${WarehouseBucket.Arn}/*
+              - Sid: ReadJobScript
+                # `sam deploy` uploads the job script to its managed bucket.
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: arn:aws:s3:::aws-sam-cli-managed-default-samclisourcebucket-*/data-jockey-glue/*
+
+  CleanTablesJob:
+    Type: AWS::Glue::Job
+    Properties:
+      Name: data-jockey-clean-tables
+      Description: Rebuilds the clean Iceberg tables from raw past/ JSON
+      Role: !GetAtt GlueJobRole.Arn
+      GlueVersion: "5.0"
+      WorkerType: G.1X
+      NumberOfWorkers: 2
+      Timeout: 30
+      MaxRetries: 0
+      Command:
+        Name: glueetl
+        PythonVersion: "3"
+        # Local path: `sam deploy` uploads it to S3 and rewrites this.
+        ScriptLocation: jobs/clean_tables.py
+      DefaultArguments:
+        --datalake-formats: iceberg
+        --job-language: python
+        --job-bookmark-option: job-bookmark-disable
+        --enable-metrics: "true"
+        --enable-continuous-cloudwatch-log: "true"
+        --TempDir: !Sub s3://${WarehouseBucket}/tmp/glue/
+        --raw_bucket: !Ref RawBucketName
+        --warehouse: !Sub s3://${WarehouseBucket}/warehouse/
+        --database: !Ref Database
+
+Outputs:
+  WarehouseBucketName:
+    Description: Bucket holding the Iceberg warehouse
+    Value: !Ref WarehouseBucket
+  DatabaseName:
+    Description: Glue Data Catalog database (query it in Athena)
+    Value: !Ref Database
+  JobName:
+    Description: Glue job name (use with `aws glue start-job-run`)
+    Value: !Ref CleanTablesJob

@@ -7,6 +7,9 @@ Local checklist, git-ignored. Tick items off with `[x]`.
 Roughly in order.
 
 ### 1. Clean tables (Glue)
+- [ ] Glue infrastructure in its own stack (`glue/`, stack `data-jockey-glue`), separate from the crawler stack
+  - [x] Template: warehouse bucket, `data_jockey` database, job role, job definition
+  - [ ] Deploy and run the skeleton job as a smoke test
 - [ ] PySpark Glue job turns `past/` into Iceberg tables
   - [ ] `courses`
   - [ ] `meetings`
