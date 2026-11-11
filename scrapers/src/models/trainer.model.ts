@@ -1,5 +1,5 @@
 export interface Trainer {
-  readonly person_reference: {
+  readonly business_reference: {
     readonly id: number;
   },
   readonly name: string;

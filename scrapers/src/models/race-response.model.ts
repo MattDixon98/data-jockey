@@ -14,21 +14,21 @@ export interface RaceResponse {
     readonly distance: string;
     readonly date: string;
     readonly time: string;
-    readonly off_time: string;
-    readonly winning_time: string;
+    readonly off_time?: string;
+    readonly winning_time?: string;
     readonly ride_count: number;
     readonly going: string;
     readonly going_shortcode: string;
-    readonly verdict: string;
+    readonly verdict?: string;
   }
   readonly prizes: {
     readonly prize: Prize[];
   },
   readonly betting_forecast: string;
   readonly rides: Ride[];
-  readonly tote_win: string;
-  readonly place_win: string;
-  readonly exacta_win: string;
-  readonly trifecta: string;
-  readonly stewards: string;
+  readonly tote_win?: string;
+  readonly place_win?: string;
+  readonly exacta_win?: string;
+  readonly trifecta?: string;
+  readonly stewards?: string;
 }

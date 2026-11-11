@@ -1,4 +1,5 @@
 import { Horse } from "./horse.model.js";
+import { Jockey } from "./jockey.model.js";
 import { Owner } from "./owner.model.js";
 import { Trainer } from "./trainer.model.js";
 
@@ -11,9 +12,10 @@ export interface Ride {
   readonly ride_status: string;
   readonly horse: Horse;
   readonly handicap: string;
-  readonly official_rating: string;
+  readonly official_rating?: string;
   readonly owner: Owner;
   readonly trainer: Trainer;
+  readonly jockey: Jockey;
   readonly ride_description: string;
   readonly betting: Betting;
   readonly horse_lifetime_stats: HorseLifetimeStats[];
@@ -33,6 +35,6 @@ interface Betting {
   readonly favourite: {
     readonly betting_favourite?: string;
   },
-  readonly current_odds: string;
-  readonly historical_odds: string[];
+  readonly current_odds?: string;
+  readonly historical_odds?: string[];
 }

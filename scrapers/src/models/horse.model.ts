@@ -6,7 +6,7 @@ export interface Horse {
   },
   readonly name: string;
   readonly slug: string;
-  readonly last_ran_days: string;
+  readonly last_ran_days?: string;
   readonly age: number;
   readonly foaled: string;
   readonly sex: {
