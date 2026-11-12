@@ -105,6 +105,47 @@ Resources:
         --warehouse: !Sub s3://${WarehouseBucket}/warehouse/
         --database: !Ref Database
 
+  # Daily rebuild after the morning crawls (06:00-06:20; only the 06:00 one,
+  # yesterday's results, writes to past/). Role name is generated from the stack
+  # name, like GlueJobRole.
+  ScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: start-job
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: glue:StartJobRun
+                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${CleanTablesJob}
+
+  DailyRebuildSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: data-jockey-rebuild-clean-tables-daily
+      Description: Rebuild the clean tables each morning after the crawls
+      ScheduleExpression: cron(0 7 * * ? *)
+      ScheduleExpressionTimezone: Europe/London
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        # Calls the Glue API directly; no Lambda in between.
+        Arn: arn:aws:scheduler:::aws-sdk:glue:startJobRun
+        RoleArn: !GetAtt ScheduleRole.Arn
+        Input: !Sub '{"JobName": "${CleanTablesJob}"}'
+        RetryPolicy:
+          # A failed start (e.g. a run still going) isn't worth retrying; the
+          # next morning's run rebuilds everything anyway.
+          MaximumRetryAttempts: 0
+
 Outputs:
   WarehouseBucketName:
     Description: Bucket holding the Iceberg warehouse
