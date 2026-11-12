@@ -99,6 +99,8 @@ Resources:
         --enable-metrics: "true"
         --enable-continuous-cloudwatch-log: "true"
         --TempDir: !Sub s3://${WarehouseBucket}/tmp/glue/
+        # The data_jockey package the job imports; uploaded by scripts/deploy.sh.
+        --extra-py-files: !Sub s3://${WarehouseBucket}/code/data_jockey.zip
         --raw_bucket: !Ref RawBucketName
         --warehouse: !Sub s3://${WarehouseBucket}/warehouse/
         --database: !Ref Database

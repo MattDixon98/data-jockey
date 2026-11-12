@@ -1,5 +1,6 @@
 # Settings for `sam deploy` (no `sam build` needed: there's no code to compile,
-# and deploy uploads the job script itself).
+# and deploy uploads the job script itself). Deploy with scripts/deploy.sh,
+# which also uploads the data_jockey package the job imports.
 # The profile is pinned so deploys always go to the data-jockey AWS account.
 version = 0.1
 
