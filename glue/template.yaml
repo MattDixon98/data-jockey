@@ -79,7 +79,7 @@ Resources:
   CleanTablesJob:
     Type: AWS::Glue::Job
     Properties:
-      Name: data-jockey-clean-tables
+      Name: data-jockey-rebuild-clean-tables
       Description: Rebuilds the clean Iceberg tables from raw past/ JSON
       Role: !GetAtt GlueJobRole.Arn
       GlueVersion: "5.0"
@@ -91,7 +91,7 @@ Resources:
         Name: glueetl
         PythonVersion: "3"
         # Local path: `sam deploy` uploads it to S3 and rewrites this.
-        ScriptLocation: jobs/clean_tables.py
+        ScriptLocation: jobs/rebuild_clean_tables.py
       DefaultArguments:
         --datalake-formats: iceberg
         --job-language: python
