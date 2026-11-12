@@ -11,7 +11,6 @@ the out dir (Iceberg isn't needed locally) and prints row counts plus a few
 sanity checks, so changes can be tried on real data before deploying.
 """
 
-import re
 import sys
 from pathlib import Path
 
@@ -22,19 +21,7 @@ from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql.functions import col  # noqa: E402
 
 from data_jockey import build, raw_schemas  # noqa: E402
-from data_jockey.tables import TABLES  # noqa: E402
-
-KEYS = {
-  "courses": ["course_id"],
-  "meetings": ["meeting_id"],
-  "races": ["race_id"],
-  "runners": ["ride_id"],
-  "horses": ["horse_id"],
-  "jockeys": ["jockey_id"],
-  "trainers": ["trainer_id"],
-  "prizes": ["race_id", "position"],
-  "horse_form": ["horse_id", "race_id"],
-}
+from data_jockey.tables import TABLE_KEYS, local_ddl  # noqa: E402
 
 
 def main(raw_dir: str, out_dir: str) -> None:
@@ -50,27 +37,21 @@ def main(raw_dir: str, out_dir: str) -> None:
   )
   spark.sparkContext.setLogLevel("ERROR")
 
-  def read(kind, schema):
-    return (
-      spark.read.schema(schema)
-      .option("multiLine", "true")
-      .option("mode", "FAILFAST")
-      .json(f"{raw_dir}/past/{kind}/date=*/*.json")
-    )
+  racecard_files = f"{raw_dir}/past/racecards/date=*/*.json"
+  race_files = f"{raw_dir}/past/races/date=*/*.json"
 
-  cards = read("racecards", raw_schemas.RACECARD_MEETING)
-  races = read("races", raw_schemas.RACE).cache()
+  cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, racecard_files)
+  races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files).cache()
 
   spark.sql("CREATE DATABASE IF NOT EXISTS local_schema")
   for name, df in build.build_all(cards, races).items():
-    ddl = re.sub(r"USING iceberg.*", "USING parquet", TABLES[name].format(db="local_schema"), flags=re.S)
-    spark.sql(ddl)
+    spark.sql(local_ddl(name, "local_schema"))
     clean = build.conform(df, spark.table(f"local_schema.{name}").schema)
     clean.write.mode("overwrite").parquet(str(out / name))
 
     written = spark.read.parquet(str(out / name))
     rows = written.count()
-    distinct_keys = written.select(*KEYS[name]).distinct().count()
+    distinct_keys = written.select(*TABLE_KEYS[name]).distinct().count()
 
     null_cols = []
     for column in written.columns:

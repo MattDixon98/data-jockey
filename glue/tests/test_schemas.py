@@ -7,16 +7,15 @@ in Spark and in the raw JSON and requiring them to match.
 """
 
 import json
-import re
 from collections import Counter
 
 import pytest
 from pyspark.sql import Row
 from pyspark.sql.types import ArrayType, StructType
 
-from conftest import FIXTURES, read_json as _read
+from conftest import FIXTURES
 from data_jockey import raw_schemas
-from data_jockey.tables import TABLES, create_statements
+from data_jockey.tables import TABLES, local_ddl
 
 SOURCES = {
   "racecards": (raw_schemas.RACECARD_MEETING, sorted(FIXTURES.glob("racecards/*/*.json"))),
@@ -54,7 +53,7 @@ def _as_plain(value):
 def test_fixtures_read_with_explicit_schema(spark, source):
   schema, files = SOURCES[source]
   assert files, f"no {source} fixtures found"
-  assert _read(spark, schema, files).count() > 0
+  assert raw_schemas.read_raw(spark, schema, files).count() > 0
 
 
 @pytest.mark.parametrize("source", SOURCES)
@@ -68,7 +67,7 @@ def test_no_field_silently_null(spark, source):
       _non_null_counts(record, schema, counts=expected)
 
   actual = Counter()
-  for row in _read(spark, schema, files).collect():
+  for row in raw_schemas.read_raw(spark, schema, files).collect():
     _non_null_counts(_as_plain(row), schema, counts=actual)
 
   assert actual == expected
@@ -91,8 +90,7 @@ def test_table_ddl_is_valid(spark):
   """Runs each DDL as a plain local table (no Iceberg jar needed locally),
   which still checks the column list, types and comments parse."""
   spark.sql("CREATE DATABASE IF NOT EXISTS ddl_check")
-  for name, ddl in zip(TABLES, create_statements("ddl_check")):
-    local = re.sub(r"USING iceberg.*", "USING parquet", ddl, flags=re.S)
-    spark.sql(local)
+  for name in TABLES:
+    spark.sql(local_ddl(name, "ddl_check"))
     assert spark.table(f"ddl_check.{name}").columns
   spark.sql("DROP DATABASE ddl_check CASCADE")

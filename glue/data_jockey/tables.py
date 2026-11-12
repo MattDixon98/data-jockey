@@ -22,6 +22,8 @@ Conventions:
   positions.
 """
 
+import re
+
 TABLES: dict[str, str] = {
   "courses": """
       CREATE TABLE IF NOT EXISTS {db}.courses (
@@ -166,6 +168,22 @@ TABLES: dict[str, str] = {
 }
 
 
-def create_statements(db: str) -> list[str]:
-  """DDL for every table, in dependency-free order."""
-  return [ddl.format(db=db) for ddl in TABLES.values()]
+# Each table's key: unique and never NULL. build.py de-duplicates on these.
+TABLE_KEYS: dict[str, list[str]] = {
+  "courses": ["course_id"],
+  "meetings": ["meeting_id"],
+  "races": ["race_id"],
+  "runners": ["ride_id"],
+  "horses": ["horse_id"],
+  "jockeys": ["jockey_id"],
+  "trainers": ["trainer_id"],
+  "prizes": ["race_id", "position"],
+  "horse_form": ["horse_id", "race_id"],
+}
+
+
+def local_ddl(name: str, db: str) -> str:
+  """A table's DDL as a plain Parquet table, for running without Iceberg (tests,
+  run_local.py). Same columns, types and comments; no partitioning."""
+  ddl = TABLES[name].format(db=db)
+  return re.sub(r"USING iceberg.*", "USING parquet", ddl, flags=re.S)

@@ -6,28 +6,16 @@ unplaced positions not recorded) and 948466 (USA).
 """
 
 import json
-import re
 
 import pytest
 from pyspark.sql.functions import col
 
-from conftest import FIXTURES, read_json
+from conftest import FIXTURES
 from data_jockey import build, raw_schemas
-from data_jockey.tables import TABLES
+from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl
 
 RACE_FILES = sorted(FIXTURES.glob("races/*/*.json"))
 CARD_FILES = sorted(FIXTURES.glob("racecards/*/*.json"))
-KEYS = {
-  "courses": ["course_id"],
-  "meetings": ["meeting_id"],
-  "races": ["race_id"],
-  "runners": ["ride_id"],
-  "horses": ["horse_id"],
-  "jockeys": ["jockey_id"],
-  "trainers": ["trainer_id"],
-  "prizes": ["race_id", "position"],
-  "horse_form": ["horse_id", "race_id"],
-}
 UK_RACE, FR_RACE, US_RACE = 947829, 948441, 948466
 
 
@@ -40,9 +28,8 @@ def target_schemas(spark):
   """Each table's schema, from its DDL created as a local table."""
   spark.sql("CREATE DATABASE IF NOT EXISTS build_check")
   schemas = {}
-  for name, ddl in TABLES.items():
-    local = re.sub(r"USING iceberg.*", "USING parquet", ddl.format(db="build_check"), flags=re.S)
-    spark.sql(local)
+  for name in TABLES:
+    spark.sql(local_ddl(name, "build_check"))
     schemas[name] = spark.table(f"build_check.{name}").schema
   yield schemas
   spark.sql("DROP DATABASE build_check CASCADE")
@@ -50,8 +37,8 @@ def target_schemas(spark):
 
 @pytest.fixture(scope="module")
 def tables(spark, target_schemas):
-  cards = read_json(spark, raw_schemas.RACECARD_MEETING, CARD_FILES)
-  races = read_json(spark, raw_schemas.RACE, RACE_FILES)
+  cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, CARD_FILES)
+  races = raw_schemas.read_raw(spark, raw_schemas.RACE, RACE_FILES)
   built = build.build_all(cards, races)
   return {
     name: build.conform(df, target_schemas[name]).cache() for name, df in built.items()
@@ -68,10 +55,10 @@ def test_every_table_is_built(tables):
   assert set(tables) == set(TABLES)
 
 
-@pytest.mark.parametrize("name", list(KEYS))
+@pytest.mark.parametrize("name", list(TABLE_KEYS))
 def test_keys_are_unique_and_not_null(tables, name):
   df = tables[name]
-  keys = KEYS[name]
+  keys = TABLE_KEYS[name]
   assert df.count() > 0
   null_key_conditions = [f"{key} IS NULL" for key in keys]
   any_key_null = " OR ".join(null_key_conditions)

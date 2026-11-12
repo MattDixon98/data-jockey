@@ -19,12 +19,3 @@ def spark(tmp_path_factory):
   )
   yield session
   session.stop()
-
-
-def read_json(spark, schema, files):
-  return (
-    spark.read.schema(schema)
-    .option("multiLine", "true")
-    .option("mode", "FAILFAST")
-    .json([str(f) for f in files])
-  )

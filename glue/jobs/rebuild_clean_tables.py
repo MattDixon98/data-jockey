@@ -44,19 +44,11 @@ job.init(args["JOB_NAME"], args)
 db = f"{CATALOG}.{args['database']}"
 raw_root = f"s3://{args['raw_bucket']}/past"
 
+racecard_files = f"{raw_root}/racecards/date=*/*.json"
+race_files = f"{raw_root}/races/date=*/*.json"
 
-def read_raw(kind: str, schema):
-  return (
-    spark.read.schema(schema)
-    .option("multiLine", "true")
-    # One malformed file should fail the run, not silently drop a race.
-    .option("mode", "FAILFAST")
-    .json(f"{raw_root}/{kind}/date=*/*.json")
-  )
-
-
-racecards = read_raw("racecards", raw_schemas.RACECARD_MEETING)
-races = read_raw("races", raw_schemas.RACE).cache()
+racecards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, racecard_files)
+races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files).cache()
 
 for name, ddl in TABLES.items():
   spark.sql(ddl.format(db=db))
