@@ -64,7 +64,11 @@
         "glue:GetJob",
         "glue:GetTags",
         "glue:TagResource",
-        "glue:UntagResource"
+        "glue:UntagResource",
+        "glue:StartJobRun",
+        "glue:GetJobRun",
+        "glue:GetJobRuns",
+        "glue:BatchStopJobRun"
       ],
       "Resource": "arn:aws:glue:*:*:job/data-jockey-*"
     },

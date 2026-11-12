@@ -79,7 +79,7 @@ Resources:
   CleanTablesJob:
     Type: AWS::Glue::Job
     Properties:
-      Name: data-jockey-clean-tables
+      Name: data-jockey-rebuild-clean-tables
       Description: Rebuilds the clean Iceberg tables from raw past/ JSON
       Role: !GetAtt GlueJobRole.Arn
       GlueVersion: "5.0"
@@ -91,7 +91,7 @@ Resources:
         Name: glueetl
         PythonVersion: "3"
         # Local path: `sam deploy` uploads it to S3 and rewrites this.
-        ScriptLocation: jobs/clean_tables.py
+        ScriptLocation: jobs/rebuild_clean_tables.py
       DefaultArguments:
         --datalake-formats: iceberg
         --job-language: python
@@ -99,9 +99,52 @@ Resources:
         --enable-metrics: "true"
         --enable-continuous-cloudwatch-log: "true"
         --TempDir: !Sub s3://${WarehouseBucket}/tmp/glue/
+        # The data_jockey package the job imports; uploaded by scripts/deploy.sh.
+        --extra-py-files: !Sub s3://${WarehouseBucket}/code/data_jockey.zip
         --raw_bucket: !Ref RawBucketName
         --warehouse: !Sub s3://${WarehouseBucket}/warehouse/
         --database: !Ref Database
+
+  # Daily rebuild after the morning crawls (06:00-06:20; only the 06:00 one,
+  # yesterday's results, writes to past/). Role name is generated from the stack
+  # name, like GlueJobRole.
+  ScheduleRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: scheduler.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: start-job
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action: glue:StartJobRun
+                Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${CleanTablesJob}
+
+  DailyRebuildSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: data-jockey-rebuild-clean-tables-daily
+      Description: Rebuild the clean tables each morning after the crawls
+      ScheduleExpression: cron(0 7 * * ? *)
+      ScheduleExpressionTimezone: Europe/London
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        # Calls the Glue API directly; no Lambda in between.
+        Arn: arn:aws:scheduler:::aws-sdk:glue:startJobRun
+        RoleArn: !GetAtt ScheduleRole.Arn
+        Input: !Sub '{"JobName": "${CleanTablesJob}"}'
+        RetryPolicy:
+          # A failed start (e.g. a run still going) isn't worth retrying; the
+          # next morning's run rebuilds everything anyway.
+          MaximumRetryAttempts: 0
 
 Outputs:
   WarehouseBucketName:
