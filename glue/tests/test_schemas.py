@@ -9,113 +9,90 @@ in Spark and in the raw JSON and requiring them to match.
 import json
 import re
 from collections import Counter
-from pathlib import Path
 
 import pytest
-from pyspark.sql import Row, SparkSession
+from pyspark.sql import Row
 from pyspark.sql.types import ArrayType, StructType
 
+from conftest import FIXTURES, read_json as _read
 from data_jockey import raw_schemas
 from data_jockey.tables import TABLES, create_statements
 
-FIXTURES = Path(__file__).parent / "fixtures" / "past"
 SOURCES = {
-    "racecards": (raw_schemas.RACECARD_MEETING, sorted(FIXTURES.glob("racecards/*/*.json"))),
-    "races": (raw_schemas.RACE, sorted(FIXTURES.glob("races/*/*.json"))),
+  "racecards": (raw_schemas.RACECARD_MEETING, sorted(FIXTURES.glob("racecards/*/*.json"))),
+  "races": (raw_schemas.RACE, sorted(FIXTURES.glob("races/*/*.json"))),
 }
 
 
-@pytest.fixture(scope="module")
-def spark():
-    session = (
-        SparkSession.builder.master("local[1]")
-        .appName("data-jockey-tests")
-        .config("spark.ui.enabled", "false")
-        .config("spark.sql.shuffle.partitions", "1")
-        .getOrCreate()
-    )
-    yield session
-    session.stop()
-
-
-def _read(spark, schema, files):
-    return (
-        spark.read.schema(schema)
-        .option("multiLine", "true")
-        .option("mode", "FAILFAST")
-        .json([str(f) for f in files])
-    )
-
-
 def _non_null_counts(value, dtype, path="", counts=None) -> Counter:
-    """Non-null count for every leaf field of `dtype`, walking `value` in step."""
-    counts = Counter() if counts is None else counts
-    if value is None:
-        return counts
-    if isinstance(dtype, StructType):
-        for field in dtype.fields:
-            child = value[field.name] if field.name in value else None
-            _non_null_counts(child, field.dataType, f"{path}.{field.name}", counts)
-    elif isinstance(dtype, ArrayType):
-        for item in value:
-            _non_null_counts(item, dtype.elementType, f"{path}[]", counts)
-    else:
-        counts[path] += 1
+  """Non-null count for every leaf field of `dtype`, walking `value` in step."""
+  counts = Counter() if counts is None else counts
+  if value is None:
     return counts
+  if isinstance(dtype, StructType):
+    for field in dtype.fields:
+      child = value[field.name] if field.name in value else None
+      _non_null_counts(child, field.dataType, f"{path}.{field.name}", counts)
+  elif isinstance(dtype, ArrayType):
+    for item in value:
+      _non_null_counts(item, dtype.elementType, f"{path}[]", counts)
+  else:
+    counts[path] += 1
+  return counts
 
 
 def _as_plain(value):
-    """Spark Rows -> dicts, recursively, so both sides walk the same way."""
-    if isinstance(value, Row):
-        return {k: _as_plain(v) for k, v in value.asDict().items()}
-    if isinstance(value, list):
-        return [_as_plain(v) for v in value]
-    return value
+  """Spark Rows -> dicts, recursively, so both sides walk the same way."""
+  if isinstance(value, Row):
+    return {k: _as_plain(v) for k, v in value.asDict().items()}
+  if isinstance(value, list):
+    return [_as_plain(v) for v in value]
+  return value
 
 
 @pytest.mark.parametrize("source", SOURCES)
 def test_fixtures_read_with_explicit_schema(spark, source):
-    schema, files = SOURCES[source]
-    assert files, f"no {source} fixtures found"
-    assert _read(spark, schema, files).count() > 0
+  schema, files = SOURCES[source]
+  assert files, f"no {source} fixtures found"
+  assert _read(spark, schema, files).count() > 0
 
 
 @pytest.mark.parametrize("source", SOURCES)
 def test_no_field_silently_null(spark, source):
-    schema, files = SOURCES[source]
+  schema, files = SOURCES[source]
 
-    expected = Counter()
-    for f in files:
-        data = json.loads(f.read_text())
-        for record in data if isinstance(data, list) else [data]:
-            _non_null_counts(record, schema, counts=expected)
+  expected = Counter()
+  for f in files:
+    data = json.loads(f.read_text())
+    for record in data if isinstance(data, list) else [data]:
+      _non_null_counts(record, schema, counts=expected)
 
-    actual = Counter()
-    for row in _read(spark, schema, files).collect():
-        _non_null_counts(_as_plain(row), schema, counts=actual)
+  actual = Counter()
+  for row in _read(spark, schema, files).collect():
+    _non_null_counts(_as_plain(row), schema, counts=actual)
 
-    assert actual == expected
-    # Every leaf should hold data somewhere in the fixtures, otherwise the
-    # comparison above proves nothing for it (e.g. a typo on both sides).
-    all_leaves = set(_non_null_counts(_example_of(schema), schema))
-    assert all_leaves - set(expected) == set(), "fields never populated in fixtures"
+  assert actual == expected
+  # Every leaf should hold data somewhere in the fixtures, otherwise the
+  # comparison above proves nothing for it (e.g. a typo on both sides).
+  all_leaves = set(_non_null_counts(_example_of(schema), schema))
+  assert all_leaves - set(expected) == set(), "fields never populated in fixtures"
 
 
 def _example_of(dtype):
-    """A dummy value with every leaf filled, to list the schema's leaf paths."""
-    if isinstance(dtype, StructType):
-        return {f.name: _example_of(f.dataType) for f in dtype.fields}
-    if isinstance(dtype, ArrayType):
-        return [_example_of(dtype.elementType)]
-    return 0
+  """A dummy value with every leaf filled, to list the schema's leaf paths."""
+  if isinstance(dtype, StructType):
+    return {f.name: _example_of(f.dataType) for f in dtype.fields}
+  if isinstance(dtype, ArrayType):
+    return [_example_of(dtype.elementType)]
+  return 0
 
 
 def test_table_ddl_is_valid(spark):
-    """Runs each DDL as a plain local table (no Iceberg jar needed locally),
-    which still checks the column list, types and comments parse."""
-    spark.sql("CREATE DATABASE IF NOT EXISTS ddl_check")
-    for name, ddl in zip(TABLES, create_statements("ddl_check")):
-        local = re.sub(r"USING iceberg.*", "USING parquet", ddl, flags=re.S)
-        spark.sql(local)
-        assert spark.table(f"ddl_check.{name}").columns
-    spark.sql("DROP DATABASE ddl_check CASCADE")
+  """Runs each DDL as a plain local table (no Iceberg jar needed locally),
+  which still checks the column list, types and comments parse."""
+  spark.sql("CREATE DATABASE IF NOT EXISTS ddl_check")
+  for name, ddl in zip(TABLES, create_statements("ddl_check")):
+    local = re.sub(r"USING iceberg.*", "USING parquet", ddl, flags=re.S)
+    spark.sql(local)
+    assert spark.table(f"ddl_check.{name}").columns
+  spark.sql("DROP DATABASE ddl_check CASCADE")

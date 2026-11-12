@@ -1,167 +1,228 @@
 """Conversions from the source's display strings to clean values.
 
-Plain Python so they're easy to test; the job wraps them as Spark UDFs. Every
-function takes the raw value (which may be None) and returns None for empty or
-"unknown" input rather than raising, so one odd value never fails a run.
-Formats are the ones seen in the real crawler output.
+Each function takes Spark column(s) and returns a column expression built from
+Spark's own functions, so everything runs inside Spark (no Python UDFs).
+build.py calls these while building the tables, e.g.
+`conversions.odds_decimal(ride.betting.current_odds)`.
+
+Empty strings, unparseable values and the source's "unknown" markers (`0-0`
+weight, position 0) all become NULL rather than failing the run. Formats are
+the ones seen in the real crawler output.
 """
 
-import re
-from decimal import Decimal, InvalidOperation
-from html import unescape
-from html.parser import HTMLParser
+from pyspark.sql import Column
+from pyspark.sql.functions import (
+  array_join,
+  coalesce,
+  get,
+  lit,
+  lower,
+  regexp_extract,
+  regexp_replace,
+  transform,
+  trim,
+  upper,
+  when,
+)
+from pyspark.sql.functions import filter as spark_filter
+from pyspark.sql.functions import round as spark_round
 
-YARDS_PER = {"m": 1760, "f": 220, "y": 1}
+YARDS_PER_MILE = 1760
+YARDS_PER_FURLONG = 220
 LBS_PER_STONE = 14
 
-_FRACTION = re.compile(r"\s*(\d+)\s*/\s*(\d+)\s*")
-_DISTANCE_PART = re.compile(r"(\d+)([mfy])")
-_TIME = re.compile(r"\s*(?:(\d+)m\s*)?(\d+(?:\.\d+)?)s\s*")
-_WEIGHT = re.compile(r"\s*(\d+)-(\d+)\s*")
-_EVENS = {"evs", "evens", "evn"}
+ODDS_PATTERN = r"^\s*(\d+)\s*/\s*(\d+)\s*$"
+EVENS = ["evs", "evens", "evn"]
+DISTANCE_PATTERN = r"^\s*(\d+[mfy]\s*)+$"
+TIME_PATTERN = r"^\s*(?:(\d+)m\s*)?(\d+(?:\.\d+)?)s\s*$"
+WEIGHT_PATTERN = r"^\s*(\d+)-(\d+)\s*$"
+PRIZE_PATTERN = r"^\s*([\d,]+(?:\.\d+)?)(?:\s+([A-Za-z]{3}))?\s*$"
+
+COMPLETE_STAGES = ["WEIGHEDIN", "RESULT", "FINISHED"]
+ABANDONED_STAGES = ["ABANDONED", "RACEVOID"]
+VALID_RACE_CLASSES = (1, 7)
+
+# Verdicts only use <b>, <p>, <ol> and <li> and (so far) no entities; these
+# cover the common ones in case that changes.
+HTML_ENTITIES = {
+  "&nbsp;": " ",
+  "&lt;": "<",
+  "&gt;": ">",
+  "&quot;": '"',
+  "&#39;": "'",
+  "&amp;": "&",  # last, so "&amp;lt;" doesn't become "<"
+}
+BLOCK_TAG_PATTERN = r"(?i)</?\s*(p|br|div|li|ol|ul)\b[^>]*>"
 
 
-def odds_to_decimal(odds: str | None) -> float | None:
-    """Fractional odds to decimal (stake included): '9/2' -> 5.5, 'Evs' -> 2.0."""
-    if not odds:
-        return None
-    if odds.strip().lower() in _EVENS:
-        return 2.0
-    match = _FRACTION.fullmatch(odds)
-    if not match:
-        return None
-    numerator, denominator = int(match[1]), int(match[2])
-    if denominator == 0:
-        return None
-    return round(numerator / denominator + 1, 4)
+def empty_to_null(value: Column) -> Column:
+  """'' or whitespace -> NULL; anything else unchanged."""
+  has_text = trim(value) != ""
+
+  return (
+    when(has_text, value)
+    .otherwise(lit(None))
+  )
 
 
-def distance_to_yards(distance: str | None) -> int | None:
-    """'1m 4f 148y' -> 2788. Any mix of miles, furlongs and yards."""
-    if not distance or not distance.strip():
-        return None
-    parts = distance.split()
-    matches = [_DISTANCE_PART.fullmatch(p) for p in parts]
-    if not all(matches):
-        return None
-    return sum(int(m[1]) * YARDS_PER[m[2]] for m in matches)
+def _extract_regex(value: Column, pattern: str, group: int) -> Column:
+  """The text matched by capture group `group` of `pattern`, or NULL if it didn't match."""
+  extracted = regexp_extract(value, pattern, group)  # '' when there's no match
+  return empty_to_null(extracted)
 
 
-def time_to_seconds(time: str | None) -> float | None:
-    """Winning time to seconds: '1m 45.20s' -> 105.2, '58.31s' -> 58.31."""
-    if not time:
-        return None
-    match = _TIME.fullmatch(time)
-    if not match:
-        return None
-    minutes = int(match[1]) if match[1] else 0
-    return round(minutes * 60 + float(match[2]), 2)
+def odds_decimal(odds: Column) -> Column:
+  """Fractional odds to decimal (stake included): '9/2' -> 5.5, 'Evs' -> 2.0."""
+  numerator = _extract_regex(odds, ODDS_PATTERN, 1).cast("double")
+  denominator = _extract_regex(odds, ODDS_PATTERN, 2).cast("double")
+
+  is_evens = lower(trim(odds)).isin(EVENS)
+  is_fraction = denominator > 0
+  decimal = spark_round(numerator / denominator + 1, 4)
+
+  return (
+    when(is_evens, lit(2.0))
+    .when(is_fraction, decimal)
+    .otherwise(lit(None))
+  )
 
 
-def weight_to_lbs(weight: str | None) -> int | None:
-    """Stones-pounds to pounds: '8-12' -> 124. '0-0' means unknown -> None."""
-    if not weight:
-        return None
-    match = _WEIGHT.fullmatch(weight)
-    if not match:
-        return None
-    lbs = int(match[1]) * LBS_PER_STONE + int(match[2])
-    return lbs or None
+def _distance_part(distance: Column, unit: str) -> Column:
+  """The number before `unit` ('m', 'f' or 'y') in a distance, or 0 if that unit isn't there."""
+  number = _extract_regex(distance, rf"(\d+){unit}", 1).cast("int")
+  return coalesce(number, lit(0))
 
 
-def parse_prize(prize: str | None) -> tuple[Decimal | None, str | None]:
-    """'1500.0 EUR' -> (Decimal('1500.00'), 'EUR')."""
-    if not prize or not prize.strip():
-        return None, None
-    amount, _, currency = prize.strip().rpartition(" ")
-    if not amount:
-        # No currency given, just a number.
-        amount, currency = currency, ""
-    try:
-        value = Decimal(amount.replace(",", "")).quantize(Decimal("0.01"))
-    except InvalidOperation:
-        return None, None
-    return value, (currency.upper() or None)
+def distance_yards(distance: Column) -> Column:
+  """'1m 4f 148y' -> 2788. Any mix of miles, furlongs and yards."""
+  is_distance = distance.rlike(DISTANCE_PATTERN)
+  miles = _distance_part(distance, "m") * YARDS_PER_MILE
+  furlongs = _distance_part(distance, "f") * YARDS_PER_FURLONG
+  yards = _distance_part(distance, "y")
+  total_yards = (miles + furlongs + yards).cast("int")
+
+  return (
+    when(is_distance, total_yards)
+    .otherwise(lit(None))
+  )
 
 
-def finish_position(status: str | None, position: int | None) -> int | None:
-    """The source uses 0 for non-runners, non-finishers and positions that
-    weren't recorded (common in France); all of those become None."""
-    if status != "RUNNER" or not position or position < 0:
-        return None
-    return position
+def time_seconds(time: Column) -> Column:
+  """Winning time to seconds: '1m 45.20s' -> 105.2, '58.31s' -> 58.31."""
+  minutes = _extract_regex(time, TIME_PATTERN, 1).cast("int")
+  minutes = coalesce(minutes, lit(0))  # '58.31s' has no minutes part
+  seconds = _extract_regex(time, TIME_PATTERN, 2).cast("double")
+
+  is_time = time.rlike(TIME_PATTERN)
+  total_seconds = spark_round(minutes * 60 + seconds, 2)
+
+  return (
+    when(is_time, total_seconds)
+    .otherwise(lit(None))
+  )
 
 
-def non_finisher_reason(casualty: dict | None) -> str | None:
-    """{'reason': 'PulledUp'} -> 'PulledUp'; {} -> None."""
-    if not casualty:
-        return None
-    return casualty.get("reason") or None
+def weight_lbs(weight: Column) -> Column:
+  """Stones-pounds to pounds: '8-12' -> 124. '0-0' means unknown -> NULL."""
+  stones = _extract_regex(weight, WEIGHT_PATTERN, 1).cast("int")
+  pounds = _extract_regex(weight, WEIGHT_PATTERN, 2).cast("int")
+
+  lbs = stones * LBS_PER_STONE + pounds
+  is_known = lbs > 0
+
+  return (
+    when(is_known, lbs)
+    .otherwise(lit(None))
+  )
 
 
-VALID_RACE_CLASSES = range(1, 8)
+def prize_amount(prize: Column) -> Column:
+  """'1,500.0 EUR' -> 1500.00 (DECIMAL(12,2))."""
+  amount = _extract_regex(prize, PRIZE_PATTERN, 1)
+  without_commas = regexp_replace(amount, ",", "")
+  return without_commas.cast("decimal(12,2)")
 
 
-def race_class(value: str | None) -> int | None:
-    """'4' -> 4. UK/Irish classes run 1-7; '' (unclassified) and anything
-    else (French races carry codes like '18' or '34392' here) -> None."""
-    if value is None:
-        return None
-    value = str(value).strip()
-    if not value.isdigit():
-        return None
-    number = int(value)
-    return number if number in VALID_RACE_CLASSES else None
+def prize_currency(prize: Column) -> Column:
+  """'1500.0 EUR' -> 'EUR'; NULL if the amount isn't valid or there's no currency."""
+  currency = _extract_regex(prize, PRIZE_PATTERN, 2)
+  return upper(currency)
 
 
-class _TextExtractor(HTMLParser):
-    BLOCK_TAGS = {"p", "br", "div", "li"}
+def finish_position(status: Column, position: Column) -> Column:
+  """The source uses 0 for non-runners, non-finishers and positions that
+  weren't recorded (common in France); all of those become NULL."""
+  is_runner = status == "RUNNER"
+  has_position = position > 0
 
-    def __init__(self):
-        super().__init__(convert_charrefs=True)
-        self.parts: list[str] = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag in self.BLOCK_TAGS:
-            self.parts.append(" ")
-
-    def handle_endtag(self, tag):
-        if tag in self.BLOCK_TAGS:
-            self.parts.append(" ")
-
-    def handle_data(self, data):
-        self.parts.append(data)
+  return (
+    when(is_runner & has_position, position.cast("int"))
+    .otherwise(lit(None))
+  )
 
 
-def strip_html(html: str | None) -> str | None:
-    """Verdict HTML to plain text, entities decoded and whitespace collapsed."""
-    if not html:
-        return None
-    parser = _TextExtractor()
-    parser.feed(html)
-    parser.close()
-    text = " ".join(unescape("".join(parser.parts)).split())
-    return text or None
+def non_finisher_reason(casualty: Column) -> Column:
+  """casualty struct {'reason': 'PulledUp'} -> 'PulledUp'; {} -> NULL."""
+  reason = casualty.getField("reason")
+  return empty_to_null(reason)
 
 
-def headgear_symbols(headgear: list[dict] | None) -> str | None:
-    """[{'symbol': 'b'}, {'symbol': 't'}] -> 'b,t'; [] -> None."""
-    symbols = [h.get("symbol") for h in headgear or [] if h and h.get("symbol")]
-    return ",".join(symbols) or None
+def race_class(value: Column) -> Column:
+  """'4' -> 4. UK/Irish classes run 1-7; '' (unclassified) and anything
+  else (French races carry codes like '18' or '34392' here) -> NULL."""
+  number = trim(value).cast("int")
+  low, high = VALID_RACE_CLASSES
+  is_valid_class = number.between(low, high)
+
+  return (
+    when(is_valid_class, number)
+    .otherwise(lit(None))
+  )
 
 
-def lifetime_stats(stats: list[dict] | None) -> tuple[int | None, int | None, int | None]:
-    """horse_lifetime_stats -> (runs, wins, places). The source sends a
-    one-element list of strings; [] -> all None."""
-    if not stats:
-        return None, None, None
-    first = stats[0] or {}
+def result_status(race_stage: Column) -> Column:
+  """Whether a race's result can be trusted, from the source's race_stage.
 
-    def as_int(key):
-        value = first.get(key)
-        try:
-            return int(value)
-        except (TypeError, ValueError):
-            return None
+  'complete'   - result in (WEIGHEDIN, RESULT, FINISHED)
+  'abandoned'  - no result will ever exist (ABANDONED, RACEVOID)
+  'incomplete' - crawled before the result was in (DORMANT, OFF, ...)
+  """
+  stage = upper(trim(race_stage))
+  is_complete = stage.isin(COMPLETE_STAGES)
+  is_abandoned = stage.isin(ABANDONED_STAGES)
+  has_stage = stage != ""
 
-    return as_int("run_count"), as_int("win_count"), as_int("place_count")
+  return (
+    when(is_complete, lit("complete"))
+    .when(is_abandoned, lit("abandoned"))
+    .when(has_stage, lit("incomplete"))
+    .otherwise(lit(None))
+  )
+
+
+def strip_html(html: Column) -> Column:
+  """Verdict HTML to plain text, entities decoded and whitespace collapsed."""
+  # Block tags separate sentences/list items, so they become a space; inline
+  # tags like <b> sit inside words ("<b>SUSIE</b>'s") and are just removed.
+  text = regexp_replace(html, BLOCK_TAG_PATTERN, " ")
+  text = regexp_replace(text, r"<[^>]*>", "")
+  for entity, char in HTML_ENTITIES.items():
+    text = regexp_replace(text, entity, char)
+  text = regexp_replace(text, r"\s+", " ")
+  text = trim(text)
+  return empty_to_null(text)
+
+
+def headgear_symbols(headgear: Column) -> Column:
+  """headgear array [{'symbol': 'b'}, {'symbol': 't'}] -> 'b,t'; [] -> NULL."""
+  symbols = transform(headgear, lambda item: item.getField("symbol"))
+  non_empty_symbols = spark_filter(symbols, lambda symbol: symbol.isNotNull() & (symbol != ""))
+  joined = array_join(non_empty_symbols, ",")
+  return empty_to_null(joined)
+
+
+def lifetime_stat(stats: Column, field: str) -> Column:
+  """One count from horse_lifetime_stats, e.g. field='run_count'. The source
+  sends a one-element list with the counts as strings; [] -> NULL."""
+  first_entry = get(stats, 0)
+  return first_entry.getField(field).cast("int")
