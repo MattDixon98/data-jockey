@@ -33,3 +33,8 @@ TODO.md
 
 # Personal Claude Code instructions
 CLAUDE.md
+
+# Model training: wheel build output and local dry runs
+model/build/
+*.egg-info/
+model/local-runs/
