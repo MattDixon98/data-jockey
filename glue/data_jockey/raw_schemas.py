@@ -12,6 +12,7 @@ crawlers/src/models (e.g. official_rating and bha are numbers, not strings).
 from pathlib import Path
 
 from pyspark.sql import DataFrame, SparkSession
+from pyspark.sql.functions import col
 from pyspark.sql.types import (
   ArrayType,
   BooleanType,
@@ -171,13 +172,18 @@ def read_raw(spark: SparkSession, schema: StructType, paths: str | list[str] | l
   `paths` is a glob (e.g. "s3://bucket/past/races/date=*/*.json") or a list of
   files. Each file is a single JSON document, and one malformed file fails the
   read rather than silently dropping a race.
+
+  Adds `source_file`, the full path of the file each row came from: the
+  snapshot (past, today, t-1...) is only in the path, not in the JSON.
   """
   if isinstance(paths, list):
     paths = [str(path) for path in paths]
 
-  return (
+  raw = (
     spark.read.schema(schema)
     .option("multiLine", "true")
     .option("mode", "FAILFAST")
     .json(paths)
   )
+  source_file = col("_metadata.file_path")
+  return raw.withColumn("source_file", source_file)

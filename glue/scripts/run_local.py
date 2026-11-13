@@ -1,10 +1,10 @@
 """Build the clean tables locally from a folder of raw JSON, no AWS needed.
 
-  python scripts/run_local.py <raw dir containing past/> [out dir]
+  python scripts/run_local.py <raw dir containing past/, today/, future/> [out dir]
 
 Download the raw data first, e.g.:
 
-  aws s3 sync s3://data-jockey-raw-2026-11-11/past/ ./raw/past/ --profile data-jockey
+  aws s3 sync s3://data-jockey-raw-2026-11-11/ ./raw/ --profile data-jockey
 
 Runs the same build code as the Glue job, then writes each table as Parquet to
 the out dir (Iceberg isn't needed locally) and prints row counts plus a few
@@ -37,8 +37,8 @@ def main(raw_dir: str, out_dir: str) -> None:
   )
   spark.sparkContext.setLogLevel("ERROR")
 
-  racecard_files = f"{raw_dir}/past/racecards/date=*/*.json"
-  race_files = f"{raw_dir}/past/races/date=*/*.json"
+  racecard_files = f"{raw_dir}/{{past,today,future}}/racecards/date=*/*.json"
+  race_files = f"{raw_dir}/{{past,today,future}}/races/date=*/*.json"
 
   cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, racecard_files)
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files).cache()
@@ -64,7 +64,7 @@ def main(raw_dir: str, out_dir: str) -> None:
     else:
       status = f"DUPLICATE KEYS ({rows - distinct_keys})"
 
-    line = f"{name:11} {rows:>9,} rows  keys {status}"
+    line = f"{name:14} {rows:>9,} rows  keys {status}"
     if null_cols:
       line += f"  all-null: {null_cols}"
     print(line)
