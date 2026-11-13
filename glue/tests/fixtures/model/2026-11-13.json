@@ -1,0 +1,173 @@
+{
+  "version": "2026-11-13",
+  "created_at": "2026-11-13T16:22:26+00:00",
+  "l2": 0.1,
+  "trained_on": {
+    "from": "2026-09-01",
+    "to": "2026-11-12",
+    "races": 2771,
+    "runners": 26580
+  },
+  "inputs": [
+    {
+      "name": "rating_diff",
+      "sql": "rating_diff",
+      "mean": 8.520899060328515e-17,
+      "std": 5.203478517405458,
+      "weight": 0.23279036564265096
+    },
+    {
+      "name": "is_unrated",
+      "sql": "CASE WHEN is_unrated THEN 1 ELSE 0 END",
+      "mean": 0.22889390519187358,
+      "std": 0.42012079853047885,
+      "weight": -0.14471911711108365
+    },
+    {
+      "name": "rating_change",
+      "sql": "rating_change",
+      "mean": -0.2297592174567344,
+      "std": 2.465685194528566,
+      "weight": -0.03542209857716806
+    },
+    {
+      "name": "weight_diff",
+      "sql": "weight_diff",
+      "mean": 8.594412699280369e-17,
+      "std": 4.833880540604375,
+      "weight": 0.049864328941217735
+    },
+    {
+      "name": "recent_form",
+      "sql": "recent_form",
+      "mean": 0.4830880071059034,
+      "std": 0.2243782799892803,
+      "weight": -0.32311290291418227
+    },
+    {
+      "name": "last_form",
+      "sql": "last_form",
+      "mean": 0.49153335608413823,
+      "std": 0.3101989993050003,
+      "weight": -0.19338540170572416
+    },
+    {
+      "name": "is_debut",
+      "sql": "CASE WHEN is_debut THEN 1 ELSE 0 END",
+      "mean": 0.07456734386756961,
+      "std": 0.26269193953394393,
+      "weight": -0.14261205283520062
+    },
+    {
+      "name": "log_days_since_run",
+      "sql": "ln(CAST(days_since_run AS DOUBLE) + 1)",
+      "mean": 3.177881852127229,
+      "std": 1.2852315828211667,
+      "weight": -0.030265762968261358
+    },
+    {
+      "name": "horse_win_rate",
+      "sql": "horse_win_rate",
+      "mean": 0.10863395619095392,
+      "std": 0.09283421239392887,
+      "weight": -0.04149716799346324
+    },
+    {
+      "name": "log_horse_runs",
+      "sql": "ln(CAST(horse_runs AS DOUBLE) + 1)",
+      "mean": 1.3968028287602872,
+      "std": 0.5078101902031887,
+      "weight": -0.06629081134896615
+    },
+    {
+      "name": "won_race_type",
+      "sql": "CASE WHEN type_wins > 0 THEN 1 ELSE 0 END",
+      "mean": 0.281941309255079,
+      "std": 0.44994489372656615,
+      "weight": -0.047956932409548764
+    },
+    {
+      "name": "won_course",
+      "sql": "CASE WHEN course_wins > 0 THEN 1 ELSE 0 END",
+      "mean": 0.05169300225733634,
+      "std": 0.2214064944281431,
+      "weight": 0.0402044578228271
+    },
+    {
+      "name": "won_distance",
+      "sql": "CASE WHEN distance_wins > 0 THEN 1 ELSE 0 END",
+      "mean": 0.23408577878103837,
+      "std": 0.4234260584252145,
+      "weight": 0.03510586430557479
+    },
+    {
+      "name": "won_going",
+      "sql": "CASE WHEN going_wins > 0 THEN 1 ELSE 0 END",
+      "mean": 0.1279533483822423,
+      "std": 0.3340378556691065,
+      "weight": 0.016728613735132392
+    },
+    {
+      "name": "jockey_win_rate",
+      "sql": "jockey_win_rate",
+      "mean": 0.10917884668715848,
+      "std": 0.04512168562619802,
+      "weight": 0.18483461092034567
+    },
+    {
+      "name": "trainer_win_rate",
+      "sql": "trainer_win_rate",
+      "mean": 0.10925016160373925,
+      "std": 0.04567385727460331,
+      "weight": 0.1668068129201046
+    },
+    {
+      "name": "has_jockey",
+      "sql": "CASE WHEN has_jockey THEN 1 ELSE 0 END",
+      "mean": 1.0,
+      "std": 1.0,
+      "weight": 0.0
+    },
+    {
+      "name": "rating_diff_x_jumps",
+      "sql": "rating_diff * CASE WHEN race_type <> 'FLAT' THEN 1 ELSE 0 END",
+      "mean": -2.051698832565376e-17,
+      "std": 3.4613211670644124,
+      "weight": -0.10270327158122596
+    },
+    {
+      "name": "recent_form_x_jumps",
+      "sql": "recent_form * CASE WHEN race_type <> 'FLAT' THEN 1 ELSE 0 END",
+      "mean": 0.15067522677155823,
+      "std": 0.25553263252192954,
+      "weight": 0.054784212623694505
+    },
+    {
+      "name": "is_debut_x_jumps",
+      "sql": "CASE WHEN is_debut THEN 1 ELSE 0 END * CASE WHEN race_type <> 'FLAT' THEN 1 ELSE 0 END",
+      "mean": 0.026486079759217455,
+      "std": 0.16057573707819567,
+      "weight": 0.020792949064606152
+    },
+    {
+      "name": "rating_diff_x_handicap",
+      "sql": "rating_diff * CASE WHEN has_handicap THEN 1 ELSE 0 END",
+      "mean": 6.399028117854551e-17,
+      "std": 4.648533465088559,
+      "weight": -0.0867511132519938
+    }
+  ],
+  "test": {
+    "from": "2026-10-30",
+    "to": "2026-11-12",
+    "races": 472,
+    "runners": 4370,
+    "log_loss": 1.9546848806748984,
+    "random_log_loss": 2.127061315653527,
+    "priced_races": 472,
+    "log_loss_priced": 1.9546848806748984,
+    "sp_log_loss_priced": 1.7095966788131596,
+    "top_pick_win_rate": 0.2754237288135593,
+    "sp_favourite_win_rate": 0.4046610169491525
+  }
+}
