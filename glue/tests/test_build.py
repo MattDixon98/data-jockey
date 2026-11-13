@@ -13,7 +13,8 @@ import json
 import shutil
 
 import pytest
-from pyspark.sql.functions import col
+from pyspark.sql.functions import col, count, to_date
+from pyspark.sql.functions import sum as spark_sum
 
 from conftest import FIXTURES
 from data_jockey import build, conversions, raw_schemas
@@ -210,6 +211,33 @@ def test_latest_keeps_most_recent_copy(spark):
   assert result == {1: "new", 2: "only"}
 
 
+def test_as_of_only_counts_earlier_days(spark):
+  history = spark.createDataFrame(
+    [
+      ("a", "2026-01-01", 1),
+      ("a", "2026-01-02", 0),
+      ("a", "2026-01-03", 1),
+      ("b", "2026-01-05", 1),
+    ],
+    "k STRING, d STRING, is_win INT",
+  ).select("k", to_date("d").alias("race_date"), "is_win")
+  targets = spark.createDataFrame(
+    [("a", "2026-01-01"), ("a", "2026-01-03"), ("a", "2026-01-10"), ("b", "2026-01-05"), ("c", "2026-01-05")],
+    "k STRING, d STRING",
+  ).select("k", to_date("d").alias("race_date"))
+
+  aggregates = {"runs": count("is_win"), "wins": spark_sum("is_win")}
+  result = build.as_of(history, targets, ["k"], aggregates).collect()
+  totals = {(r.k, str(r.race_date)): (r.runs, r.wins) for r in result}
+  assert totals == {
+    ("a", "2026-01-01"): (0, None),  # nothing earlier
+    ("a", "2026-01-03"): (2, 1),  # the 3rd itself doesn't count
+    ("a", "2026-01-10"): (3, 2),  # earlier target rows don't count as runs
+    ("b", "2026-01-05"): (0, None),  # same day only
+    ("c", "2026-01-05"): (0, None),  # no history at all
+  }
+
+
 def test_conform_rejects_missing_columns(spark, target_schemas):
   df = spark.createDataFrame([(1,)], "jockey_id BIGINT")
   with pytest.raises(ValueError, match="name"):
@@ -337,3 +365,132 @@ def test_odds_history_follows_the_on_course_market(snapshot_tables):
 def test_odds_history_only_from_past(snapshot_tables):
   upcoming = _rows(snapshot_tables["odds_history"], race_id=UPCOMING_RACE)
   assert upcoming == []
+
+
+# --- Model features ---------------------------------------------------------
+
+# Columns that may be NULL in runner_features: ids and raw context. Every
+# other column is a model input and must always have a value.
+NULLABLE_FEATURE_COLUMNS = {
+  "jockey_id",
+  "distance_band",
+  "going_group",
+  "official_rating",
+  "weight_lbs",
+  "finish_position",
+}
+# Built from earlier races only, so the same for every snapshot of a ride.
+HISTORY_COLUMNS = [
+  "horse_runs",
+  "horse_wins",
+  "horse_places",
+  "days_since_run",
+  "last_form",
+  "recent_form",
+  "type_runs",
+  "type_wins",
+  "course_runs",
+  "course_wins",
+  "distance_runs",
+  "distance_wins",
+  "going_runs",
+  "going_wins",
+  "trainer_runs",
+  "trainer_win_rate",
+]
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_runner_features_model_inputs_never_null(request, fixture):
+  features = request.getfixturevalue(fixture)["runner_features"]
+  assert features.count() > 0
+  for column in features.columns:
+    if column not in NULLABLE_FEATURE_COLUMNS:
+      assert features.where(col(column).isNull()).count() == 0, column
+
+
+def test_runner_features_only_uk_ire_runners(tables):
+  features = tables["runner_features"]
+  assert {r.race_id for r in features.select("race_id").distinct().collect()} == {UK_RACE}
+  runners = _rows(tables["runners"], race_id=UK_RACE)
+  assert features.count() == sum(1 for r in runners if r["status"] == "RUNNER")
+
+
+def test_runner_features_dont_see_the_race_itself(snapshot_tables):
+  """The past file's form already includes the race (Fratas: 948004 is its
+  first previous result there); features must match the t-1 crawl's."""
+  features = snapshot_tables["runner_features"].where(col("race_id") == SETTLED_RACE)
+  by_snapshot = {}
+  for row in features.collect():
+    by_snapshot.setdefault(row.ride_id, {})[row.snapshot] = row
+
+  past_form = _snapshot_json(SETTLED_RACE, "past")["rides"]
+  fratas = next(r for r in past_form if r["horse"]["name"] == "Fratas")
+  assert fratas["horse"]["previous_results"][0]["race_id"] == SETTLED_RACE
+
+  compared = 0
+  for snapshots in by_snapshot.values():
+    if "past" not in snapshots:
+      continue
+    for column in HISTORY_COLUMNS:
+      assert snapshots["past"][column] == snapshots["t-1"][column], column
+    assert snapshots["t-1"].finish_position is None
+    compared += 1
+  assert compared == 10
+
+
+def test_runner_features_ratings_compare_within_race_type(snapshot_tables):
+  # Fratas: rated 115 over hurdles; last ran on the flat (76), last hurdle 112.
+  (row,) = _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE, snapshot="t-1", horse_id=1082171)
+  assert row["official_rating"] == 115
+  assert row["rating_change"] == 3
+
+
+def test_runner_features_field_follows_each_snapshot(snapshot_tables):
+  features = snapshot_tables["runner_features"].where(col("race_id") == UPCOMING_RACE)
+  for snapshot in ("t-3", "t-2", "t-1"):
+    raw_runners = [r for r in _snapshot_json(UPCOMING_RACE, snapshot)["rides"] if r["ride_status"] == "RUNNER"]
+    rows = features.where(col("snapshot") == snapshot).collect()
+    assert len(rows) == len(raw_runners)
+    assert {r.field_size for r in rows} == {len(raw_runners)}
+    assert abs(sum(r.rating_diff for r in rows if not r.is_unrated)) < 1e-6
+
+
+def test_runner_features_before_jockeys_are_booked(snapshot_tables):
+  t3 = snapshot_tables["runner_features"].where((col("race_id") == UPCOMING_RACE) & (col("snapshot") == "t-3"))
+  unbooked = [r for r in t3.collect() if r.jockey_id is None]
+  assert unbooked, "fixture should have rides with no jockey yet at t-3"
+  for row in unbooked:
+    assert not row.has_jockey
+    assert row.jockey_rides == 0
+    assert row.jockey_win_rate == pytest.approx(0.1)
+
+
+def test_runner_features_dropped_entries_keep_their_form(snapshot_tables):
+  t1_rides = {r["ride_reference"]["id"] for r in _snapshot_json(UPCOMING_RACE, "t-1")["rides"]}
+  dropped = [
+    r for r in _snapshot_json(UPCOMING_RACE, "t-3")["rides"]
+    if r["ride_reference"]["id"] not in t1_rides and r["horse"].get("previous_results")
+  ]
+  assert dropped
+  features = snapshot_tables["runner_features"].where((col("race_id") == UPCOMING_RACE) & (col("snapshot") == "t-3"))
+  runs = {r.ride_id: r.horse_runs for r in features.collect()}
+  for ride in dropped:
+    assert runs[ride["ride_reference"]["id"]] > 0
+
+
+def test_amended_result_is_used(snapshot_tables):
+  """948004: Shoda passed the post first, Fratas was awarded the race."""
+  fratas = 1082171
+  past = _snapshot_json(SETTLED_RACE, "past")["rides"]
+  shoda = next(r for r in past if r["horse"]["name"] == "Shoda")["horse"]["horse_reference"]["id"]
+
+  runners = {r["horse_id"]: r["finish_position"] for r in _rows(snapshot_tables["runners"], race_id=SETTLED_RACE)}
+  assert runners[fratas] == 1
+  assert runners[shoda] == 2
+
+  (form,) = _rows(snapshot_tables["horse_form"], race_id=SETTLED_RACE, horse_id=fratas)
+  assert form["finish_position"] == 1
+
+  (features,) = _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE, snapshot="past", horse_id=fratas)
+  assert features["finish_position"] == 1

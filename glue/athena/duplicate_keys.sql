@@ -30,4 +30,7 @@ SELECT 'odds_snapshots', COUNT(*)
 FROM (SELECT ride_id, snapshot FROM data_jockey.odds_snapshots GROUP BY ride_id, snapshot HAVING COUNT(*) > 1)
 UNION ALL
 SELECT 'odds_history', COUNT(*)
-FROM (SELECT ride_id, seq FROM data_jockey.odds_history GROUP BY ride_id, seq HAVING COUNT(*) > 1);
+FROM (SELECT ride_id, seq FROM data_jockey.odds_history GROUP BY ride_id, seq HAVING COUNT(*) > 1)
+UNION ALL
+SELECT 'runner_features', COUNT(*)
+FROM (SELECT ride_id, snapshot FROM data_jockey.runner_features GROUP BY ride_id, snapshot HAVING COUNT(*) > 1);

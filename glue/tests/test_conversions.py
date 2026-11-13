@@ -176,6 +176,43 @@ def test_official_position(spark, position, amended_position, expected):
 
 
 @pytest.mark.parametrize(
+  "yards, expected",
+  [
+    (1100, "5-6f"),
+    (1320, "5-6f"),
+    (1760, "7-8f"),
+    (2200, "9-11f"),
+    (2788, "12-14f"),
+    (4400, "19-22f"),
+    (7040, "23f+"),
+    (None, None),
+  ],
+)
+def test_distance_band(spark, yards, expected):
+  assert convert(spark, c.distance_band, yards, "int") == expected
+
+
+@pytest.mark.parametrize(
+  "raw, expected",
+  [
+    ("GD", "GOOD"),
+    ("GS", "GOOD_TO_SOFT"),
+    ("YLD", "GOOD_TO_SOFT"),
+    ("SFT", "SOFT"),
+    ("HVY", "HEAVY"),
+    ("GF", "FIRM"),
+    ("ST", "STANDARD"),
+    ("STS", "STANDARD"),
+    ("FST", None),
+    ("", None),
+    (None, None),
+  ],
+)
+def test_going_group(spark, raw, expected):
+  assert convert(spark, c.going_group, raw) == expected
+
+
+@pytest.mark.parametrize(
   "name, country_code, expected",
   [
     ("Tips For Every Race At raceday-ready.com Handicap Hurdle", "ENG", "HURDLE"),

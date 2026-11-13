@@ -46,6 +46,33 @@ COMPLETE_STAGES =["WEIGHEDIN", "RESULT", "FINISHED"]
 ABANDONED_STAGES = ["ABANDONED", "RACEVOID"]
 VALID_RACE_CLASSES = (1, 7)
 
+# Distance bands for "has won at this sort of trip": (upper limit in yards,
+# label), limits half a furlong above each band's longest trip.
+DISTANCE_BANDS = [
+  (1430, "5-6f"),
+  (1870, "7-8f"),
+  (2530, "9-11f"),
+  (3190, "12-14f"),
+  (4070, "15-18f"),
+  (4950, "19-22f"),
+]
+LONGEST_DISTANCE_BAND = "23f+"
+# going_shortcode -> going group. Yielding is Ireland's word for good to soft.
+GOING_GROUPS = {
+  "HRD": "FIRM",
+  "FRM": "FIRM",
+  "GF": "FIRM",
+  "GD": "GOOD",
+  "GS": "GOOD_TO_SOFT",
+  "YLD": "GOOD_TO_SOFT",
+  "SFT": "SOFT",
+  "HVY": "HEAVY",
+  "ST": "STANDARD",
+  "STF": "STANDARD",
+  "STS": "STANDARD",
+  "SLW": "STANDARD",
+}
+
 # Courses' country short_name for Great Britain and Ireland.
 UK_IRE_COUNTRY_CODES = ["ENG", "Scot", "Wale", "Nort", "Eire"]
 # The last race-type word in a race name. Greedy `.*` makes it the last one, so
@@ -161,10 +188,8 @@ def prize_currency(prize: Column) -> Column:
 
 
 def official_position(position: Column, amended_position: Column) -> Column:
-  """The result after any stewards' inquiry. The source only sends
-  amended_position for some races (e.g. 948004: Fratas finished 2nd and was
-  awarded the race); when it is there it is the official placing, otherwise
-  position is."""
+  """The result after any stewards' inquiry. The source only sends amended_position for some races (e.g. 948004: Fratas finished 2nd and was awarded the race);
+  when it is there it is the official placing, otherwise position is."""
   has_amendment = amended_position > 0
 
   return (
@@ -202,6 +227,23 @@ def race_class(value: Column) -> Column:
     when(is_valid_class, number)
     .otherwise(lit(None))
   )
+
+
+def distance_band(yards: Column) -> Column:
+  """Distance in yards -> band label, e.g. 2200 (1m 2f) -> '9-11f'; NULL stays NULL."""
+  band = when(yards.isNull(), lit(None))
+  for upper_limit, label in DISTANCE_BANDS:
+    band = band.when(yards <= upper_limit, lit(label))
+  return band.otherwise(lit(LONGEST_DISTANCE_BAND))
+
+
+def going_group(going_shortcode: Column) -> Column:
+  """going_shortcode -> FIRM, GOOD, GOOD_TO_SOFT, SOFT, HEAVY or STANDARD (all-weather); dirt codes (FST, SLP) and anything unknown -> NULL."""
+  code = upper(trim(going_shortcode))
+  group = when(code.isNull(), lit(None))
+  for shortcode, name in GOING_GROUPS.items():
+    group = group.when(code == shortcode, lit(name))
+  return group.otherwise(lit(None))
 
 
 def race_type(name: Column, country_code: Column) -> Column:

@@ -19,7 +19,7 @@ most recent race (and, for names, the most recent non-null value).
 
 from pyspark.sql import DataFrame
 
-from data_jockey.build.utilities import conform, latest, race_files, racecard_files
+from data_jockey.build.utilities import as_of, conform, latest, race_files, racecard_files
 from data_jockey.build.courses import courses
 from data_jockey.build.horse_form import horse_form
 from data_jockey.build.horses import horses
@@ -29,22 +29,23 @@ from data_jockey.build.odds_history import odds_history
 from data_jockey.build.odds_snapshots import odds_snapshots
 from data_jockey.build.prizes import prizes
 from data_jockey.build.races import races
+from data_jockey.build.runner_features import runner_features
 from data_jockey.build.runners import runners
 from data_jockey.build.trainers import trainers
 
-__all__ = ["build_all", "conform", "latest"]
+__all__ = ["as_of", "build_all", "conform", "latest"]
 
 
 def build_all(racecards: DataFrame, races_raw: DataFrame) -> dict[str, DataFrame]:
   """Every clean table, keyed by table name (unconformed column order).
 
   Takes the raw reads (with source_file) of every snapshot. Everything but
-  odds_snapshots uses only each race's most trusted file.
+  odds_snapshots and runner_features use only each race's most trusted file.
   """
   all_race_files = races_raw
   racecards = racecard_files(racecards)
   races_raw = race_files(races_raw)
-  return {
+  tables = {
     "courses": courses(racecards),
     "meetings": meetings(racecards),
     "races": races(racecards, races_raw),
@@ -57,3 +58,10 @@ def build_all(racecards: DataFrame, races_raw: DataFrame) -> dict[str, DataFrame
     "odds_snapshots": odds_snapshots(all_race_files),
     "odds_history": odds_history(races_raw),
   }
+  # Model features are built on top of the tables above.
+  tables["runner_features"] = runner_features(
+    all_race_files,
+    tables["races"],
+    tables["runners"],
+  )
+  return tables

@@ -208,6 +208,54 @@ TABLES: dict[str, str] = {
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
+  # Model inputs for every UK/IRE runner at every snapshot, built only from
+  # races before the race day (see build/runner_features.py). Feature
+  # columns are never NULL: gaps get a neutral value and a flag.
+  "runner_features": """
+      CREATE TABLE IF NOT EXISTS {db}.runner_features (
+          ride_id             BIGINT,
+          snapshot            STRING  COMMENT 't-N, today or past; past rows are the training data',
+          snapshot_rank       INT,
+          race_id             BIGINT,
+          race_date           DATE,
+          horse_id            BIGINT,
+          jockey_id           BIGINT  COMMENT 'NULL until booked (t-3/t-2)',
+          trainer_id          BIGINT,
+          race_type           STRING,
+          distance_band       STRING  COMMENT 'e.g. 9-11f',
+          going_group         STRING  COMMENT 'FIRM, GOOD, GOOD_TO_SOFT, SOFT, HEAVY, STANDARD; NULL if unknown',
+          field_size          INT     COMMENT 'Runners at this snapshot',
+          official_rating     INT,
+          rating_diff         DOUBLE  COMMENT 'Rating minus the field average; 0 if unrated',
+          is_unrated          BOOLEAN,
+          rating_change       INT     COMMENT 'Rating minus the rating at the last known run of the same race type; 0 if unknown',
+          weight_lbs          INT,
+          weight_diff         DOUBLE  COMMENT 'Weight minus the field average; 0 if unknown',
+          horse_runs          INT     COMMENT 'Known runs before the race (horse_form)',
+          horse_wins          INT,
+          horse_places        INT     COMMENT 'Top-3 finishes',
+          horse_win_rate      DOUBLE  COMMENT 'Shrunk towards 10%',
+          is_debut            BOOLEAN COMMENT 'No known runs',
+          days_since_run      INT     COMMENT '0 on debut',
+          last_form           DOUBLE  COMMENT 'Last run: 0 = won, 1 = last or did not finish; 0.5 if none',
+          recent_form         DOUBLE  COMMENT 'Average form score over the last 3 runs; 0.5 if none',
+          type_runs           INT     COMMENT 'Known runs of the same race type (flat, hurdle, chase, NH flat)',
+          type_wins           INT,
+          course_runs         INT,
+          course_wins         INT,
+          distance_runs       INT     COMMENT 'In the same distance band',
+          distance_wins       INT,
+          going_runs          INT     COMMENT 'In the same going group',
+          going_wins          INT,
+          has_jockey          BOOLEAN,
+          jockey_rides        INT     COMMENT 'Rides in complete UK/IRE races before the race day',
+          jockey_win_rate     DOUBLE  COMMENT 'Shrunk towards 10%; 10% when no jockey yet',
+          trainer_runs        INT,
+          trainer_win_rate    DOUBLE  COMMENT 'Shrunk towards 10%',
+          finish_position     INT     COMMENT 'The label: past snapshot only, NULL before'
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
 }
 
 
@@ -224,6 +272,7 @@ TABLE_KEYS: dict[str, list[str]] = {
   "horse_form": ["horse_id", "race_id"],
   "odds_snapshots": ["ride_id", "snapshot"],
   "odds_history": ["ride_id", "seq"],
+  "runner_features": ["ride_id", "snapshot"],
 }
 
 
