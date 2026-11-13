@@ -37,13 +37,15 @@ based on past performance.
 ## Status
 
 - ✅ Daily crawling to S3, deployed on AWS, with three months of history backfilled
-- 🚧 Glue processing and Iceberg tables
+- ✅ Glue processing into Iceberg tables, rebuilt daily and queryable in Athena
+- 🚧 Odds snapshots (bringing in `today/` and `future/`)
 - 🚧 Undervalued-runner model
 - 🚧 Django website and API
 
 ## Repository structure
 
 - `crawlers/`: TypeScript crawlers, Lambda entry point and AWS SAM template
+- `glue/`: PySpark Glue job, the `data_jockey` package it uses, tests, Athena checks and AWS SAM template
 - `backend/`: Django project
 
 *Data is sourced from publicly available racing pages for personal, non-commercial
