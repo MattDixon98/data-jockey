@@ -176,6 +176,32 @@ def test_official_position(spark, position, amended_position, expected):
 
 
 @pytest.mark.parametrize(
+  "decimal, expected",
+  [
+    (4.3333, "10/3"),  # exactly on the ladder
+    (7.69, "13/2"),  # 6.69/1 is nearer 13/2 (7.5) than 7/1 (8.0)
+    (7.8, "7/1"),
+    (2.0, "Evens"),
+    (1.96, "Evens"),  # Evens (2.0) and 10/11 (1.909) split at 1.9545
+    (1.95, "10/11"),
+    (1.5, "1/2"),
+    (1.01, "1/10"),  # shorter than the ladder
+    (5000.0, "500/1"),  # longer than the ladder
+    (None, None),
+  ],
+)
+def test_fractional_odds(spark, decimal, expected):
+  assert convert(spark, c.fractional_odds, decimal, "double") == expected
+
+
+def test_fractional_odds_round_trip_the_whole_ladder(spark):
+  """Every ladder price's own decimal comes back as that price."""
+  for price in c.ODDS_LADDER:
+    decimal = 2.0 if price == "Evens" else int(price.split("/")[0]) / int(price.split("/")[1]) + 1
+    assert convert(spark, c.fractional_odds, decimal, "double") == price
+
+
+@pytest.mark.parametrize(
   "yards, expected",
   [
     (1100, "5-6f"),

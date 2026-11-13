@@ -34,6 +34,16 @@ LBS_PER_STONE = 14
 
 ODDS_PATTERN = r"^\s*(\d+)\s*/\s*(\d+)\s*$"
 EVENS = ["evs", "evens", "evn"]
+# The standard prices bookmakers quote, shortest first. Our own odds are
+# exact (1 / probability) and get shown as the nearest of these.
+ODDS_LADDER = [
+  "1/10", "1/9", "1/8", "2/15", "1/7", "2/13", "1/6", "2/11", "1/5", "2/9", "1/4", "2/7", "3/10",
+  "1/3", "4/11", "2/5", "4/9", "1/2", "8/15", "4/7", "8/13", "4/6", "8/11", "4/5", "5/6", "10/11",
+  "Evens", "11/10", "6/5", "5/4", "11/8", "6/4", "13/8", "7/4", "15/8", "2/1", "9/4", "5/2", "11/4",
+  "3/1", "10/3", "7/2", "4/1", "9/2", "5/1", "11/2", "6/1", "13/2", "7/1", "15/2", "8/1", "17/2",
+  "9/1", "10/1", "11/1", "12/1", "14/1", "16/1", "18/1", "20/1", "22/1", "25/1", "28/1", "33/1",
+  "40/1", "50/1", "66/1", "80/1", "100/1", "125/1", "150/1", "200/1", "250/1", "500/1",
+]
 DISTANCE_PATTERN = r"^\s*(\d+[mfy]\s*)+$"
 TIME_PATTERN = r"^\s*(?:(\d+)m\s*)?(\d+(?:\.\d+)?)s\s*$"
 WEIGHT_PATTERN = r"^\s*(\d+)-(\d+)\s*$"
@@ -123,6 +133,29 @@ def odds_decimal(odds: Column) -> Column:
     .when(is_fraction, decimal)
     .otherwise(lit(None))
   )
+
+
+def _ladder_decimal(price: str) -> float:
+  if price == "Evens":
+    return 2.0
+  numerator, denominator = price.split("/")
+  return int(numerator) / int(denominator) + 1
+
+
+def fractional_odds(decimal: Column) -> Column:
+  prices = []
+  for ladder_price in ODDS_LADDER:
+    ladder_decimal = _ladder_decimal(ladder_price)
+    prices.append((ladder_decimal, ladder_price))
+
+  price = when(decimal.isNull(), lit(None))
+  for index in range(len(prices) - 1):
+    this_decimal, this_price = prices[index]
+    next_decimal, _ = prices[index + 1]
+    halfway = (this_decimal + next_decimal) / 2
+    price = price.when(decimal < halfway, lit(this_price))
+
+  return price.otherwise(lit(ODDS_LADDER[-1]))
 
 
 def _distance_part(distance: Column, unit: str) -> Column:
