@@ -94,3 +94,15 @@ def test_table_ddl_is_valid(spark):
     spark.sql(local_ddl(name, "ddl_check"))
     assert spark.table(f"ddl_check.{name}").columns
   spark.sql("DROP DATABASE ddl_check CASCADE")
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_rows_know_their_source_file(spark, source):
+  schema, files = SOURCES[source]
+  df = raw_schemas.read_raw(spark, schema, files)
+  source_files = [row.source_file for row in df.select("source_file").distinct().collect()]
+
+  # Spark gives a URI (file:/..., s3://...); compare from past/ onwards.
+  expected = sorted(path.relative_to(FIXTURES.parent).as_posix() for path in files)
+  actual = sorted(source_file.split("/fixtures/", 1)[1] for source_file in source_files)
+  assert actual == expected
