@@ -235,3 +235,37 @@ def test_lifetime_stat(spark, raw, expected):
 @pytest.mark.parametrize("raw, expected", [("Good", "Good"), ("", None), ("   ", None), (None, None)])
 def test_empty_to_null(spark, raw, expected):
   assert convert(spark, c.empty_to_null, raw) == expected
+
+
+@pytest.mark.parametrize(
+  "raw, expected",
+  [
+    ("s3://data-jockey-raw-2026-11-11/past/races/date=2026-11-12/948004.json", "past"),
+    ("s3://data-jockey-raw-2026-11-11/today/races/date=2026-11-12/948004.json", "today"),
+    ("s3://data-jockey-raw-2026-11-11/future/races/date=2026-11-14/946551-t-1.json", "t-1"),
+    ("s3://data-jockey-raw-2026-11-11/future/races/date=2026-11-14/946551-t-3.json", "t-3"),
+    ("file:///raw/future/racecards/date=2026-11-14/racecards-t-2.json", "t-2"),
+    ("file:///raw/past/racecards/date=2026-11-12/racecards.json", "past"),
+    ("s3://bucket/other/races/date=2026-11-12/948004.json", None),
+    ("", None),
+    (None, None),
+  ],
+)
+def test_snapshot(spark, raw, expected):
+  assert convert(spark, c.snapshot, raw) == expected
+
+
+@pytest.mark.parametrize(
+  "raw, expected",
+  [
+    ("past", 0),
+    ("today", 1),
+    ("t-1", 2),
+    ("t-2", 3),
+    ("t-3", 4),
+    ("future", None),
+    (None, None),
+  ],
+)
+def test_snapshot_rank(spark, raw, expected):
+  assert convert(spark, c.snapshot_rank, raw) == expected

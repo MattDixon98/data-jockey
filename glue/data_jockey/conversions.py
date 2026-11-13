@@ -14,6 +14,7 @@ from pyspark.sql import Column
 from pyspark.sql.functions import (
   array_join,
   coalesce,
+  concat,
   get,
   lit,
   lower,
@@ -38,7 +39,10 @@ TIME_PATTERN = r"^\s*(?:(\d+)m\s*)?(\d+(?:\.\d+)?)s\s*$"
 WEIGHT_PATTERN = r"^\s*(\d+)-(\d+)\s*$"
 PRIZE_PATTERN = r"^\s*([\d,]+(?:\.\d+)?)(?:\s+([A-Za-z]{3}))?\s*$"
 
-COMPLETE_STAGES = ["WEIGHEDIN", "RESULT", "FINISHED"]
+# {past|today|future}/{racecards|races}/date=YYYY-MM-DD/{name}[-t-N].json
+SNAPSHOT_PATH_PATTERN = r"/(past|today|future)/(?:racecards|races)/date=[^/]+/[^/]*?(?:-t-(\d+))?\.json$"
+
+COMPLETE_STAGES =["WEIGHEDIN", "RESULT", "FINISHED"]
 ABANDONED_STAGES = ["ABANDONED", "RACEVOID"]
 VALID_RACE_CLASSES = (1, 7)
 
@@ -196,6 +200,37 @@ def result_status(race_stage: Column) -> Column:
     when(is_complete, lit("complete"))
     .when(is_abandoned, lit("abandoned"))
     .when(has_stage, lit("incomplete"))
+    .otherwise(lit(None))
+  )
+
+
+def snapshot(source_file: Column) -> Column:
+  """Which crawl a raw file is from, by its path: 'past', 'today' or 't-N'
+  (future files, N days before the race). Any other path -> NULL."""
+  phase = _extract_regex(source_file, SNAPSHOT_PATH_PATTERN, 1)
+  days_ahead = _extract_regex(source_file, SNAPSHOT_PATH_PATTERN, 2)
+  is_future = phase == "future"
+  future_snapshot = concat(lit("t-"), days_ahead)
+
+  return (
+    when(is_future, future_snapshot)
+    .when(phase.isNotNull(), phase)
+    .otherwise(lit(None))
+  )
+
+
+def snapshot_rank(snapshot_name: Column) -> Column:
+  """Order of trust, lowest first: past 0, today 1, t-1 2, t-2 3, t-3 4.
+  Results only exist in past; later snapshots have fresher odds and entries."""
+  days_ahead = _extract_regex(snapshot_name, r"^t-(\d+)$", 1).cast("int")
+  is_past = snapshot_name == "past"
+  is_today = snapshot_name == "today"
+  is_future = days_ahead.isNotNull()
+
+  return (
+    when(is_past, lit(0))
+    .when(is_today, lit(1))
+    .when(is_future, days_ahead + 1)
     .otherwise(lit(None))
   )
 
