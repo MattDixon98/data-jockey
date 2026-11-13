@@ -2,7 +2,9 @@
 locally for a dry run).
 
 S3 layout under the clean bucket (`model_prefix`, default model/):
-  current.json                  the weights the daily rebuild scores with
+  current.json                  the latest promoted weights
+  promoted/<YYYY-MM-DD>.json    every promoted model, kept: the daily rebuild prices
+                                each race with the newest one trained before it
   versions/<YYYY-MM-DD>.json    every candidate, promoted or not
   versions/<YYYY-MM-DD>.md      its report
 """
@@ -68,6 +70,7 @@ def run(
   write_text(s3, bucket, f"{model_prefix}versions/{version}.json", model_json, "application/json")
   write_text(s3, bucket, f"{model_prefix}versions/{version}.md", result.report, "text/markdown")
   if result.promote:
+    write_text(s3, bucket, f"{model_prefix}promoted/{version}.json", model_json, "application/json")
     write_text(s3, bucket, f"{model_prefix}{CURRENT}", model_json, "application/json")
   print(f"Published {version} to s3://{bucket}/{model_prefix}versions/ (promoted: {result.promote})")
   return result
