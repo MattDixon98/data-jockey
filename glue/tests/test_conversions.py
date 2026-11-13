@@ -160,6 +160,33 @@ def test_race_class(spark, raw, expected):
 
 
 @pytest.mark.parametrize(
+  "name, country_code, expected",
+  [
+    ("Tips For Every Race At raceday-ready.com Handicap Hurdle", "ENG", "HURDLE"),
+    ("Railway Bar Lismullen Hurdle (grade 2)", "Eire", "HURDLE"),
+    ("Boyle Sports Handicap Chase (GBB Race)", "ENG", "CHASE"),
+    ("INHSC Supporting Point-To-Points Hunters Chase", "Eire", "CHASE"),
+    ("Grand Steeplechase", "ENG", "CHASE"),
+    ("Paper Chase Handicap Hurdle", "ENG", "HURDLE"),
+    ("1664 Biere Open NH Flat Race (GBB Race)", "ENG", "N_H_FLAT"),
+    ("Sky Sports Racing Sky 415 Open NH Flat Race (AWT) (GBB Race)", "ENG", "N_H_FLAT"),
+    ("BAR 1 Betting Best Odds Guaranteed Overnight (Pro/Am) Flat Race", "Eire", "N_H_FLAT"),
+    ("Fairyhouse Christmas Party December 12th Point-To-Point Flat Race", "Eire", "N_H_FLAT"),
+    ("Kempton Bumper", "ENG", "N_H_FLAT"),
+    ("Irish Stallion Farms EBF Maiden", "Eire", "FLAT"),
+    ("Racing TV Handicap", "Scot", "FLAT"),
+    ("Prix De Vaumas - Attele - Group 3", "FR", None),
+    ("Race 1 - Claiming", "USA", None),
+    ("Some Handicap Hurdle", None, None),
+    (None, "ENG", None),
+  ],
+)
+def test_race_type(spark, name, country_code, expected):
+  df = spark.createDataFrame([(name, country_code)], "name string, country_code string")
+  assert df.select(c.race_type(col("name"), col("country_code"))).first()[0] == expected
+
+
+@pytest.mark.parametrize(
   "raw, expected",
   [
     ("WEIGHEDIN", "complete"),

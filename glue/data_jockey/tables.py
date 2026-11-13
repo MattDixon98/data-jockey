@@ -79,7 +79,8 @@ TABLES: dict[str, str] = {
           book_percentage         DOUBLE  COMMENT 'On-course overround',
           betting_forecast        STRING,
           verdict                 STRING  COMMENT 'Racecard verdict, HTML stripped',
-          snapshot                STRING  COMMENT 'Crawl the row is from: past, today, t-1, t-2 or t-3'
+          snapshot                STRING  COMMENT 'Crawl the row is from: past, today, t-1, t-2 or t-3',
+          race_type               STRING  COMMENT 'FLAT, HURDLE, CHASE or N_H_FLAT, from the race name; NULL outside UK/IRE'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
@@ -158,7 +159,7 @@ TABLES: dict[str, str] = {
           course_shortcode    STRING,
           race_name           STRING,
           race_class          INT,
-          run_type            STRING  COMMENT 'FLAT, HURDLE, CHASE, N_H_FLAT; NULL abroad',
+          run_type            STRING  COMMENT 'FLAT, HURDLE, CHASE, N_H_FLAT; often NULL abroad',
           distance            STRING,
           distance_yards      INT,
           going               STRING,

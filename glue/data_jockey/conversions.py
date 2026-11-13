@@ -46,6 +46,13 @@ COMPLETE_STAGES =["WEIGHEDIN", "RESULT", "FINISHED"]
 ABANDONED_STAGES = ["ABANDONED", "RACEVOID"]
 VALID_RACE_CLASSES = (1, 7)
 
+# Courses' country short_name for Great Britain and Ireland.
+UK_IRE_COUNTRY_CODES = ["ENG", "Scot", "Wale", "Nort", "Eire"]
+# The last race-type word in a race name. Greedy `.*` makes it the last one, so
+# a sponsor's word earlier in the name doesn't count. "Flat Race" is how Irish
+# bumpers are named ("(Pro/Am) Flat Race"); flat-season races carry no type word.
+RACE_TYPE_PATTERN = r"(?i)^.*\b(hurdles?|(?:steeple)?chase|flat race|(?:n\.?h\.?|national hunt) flat|bumper)\b"
+
 # Verdicts only use <b>, <p>, <ol> and <li> and (so far) no entities; these
 # cover the common ones in case that changes.
 HTML_ENTITIES = {
@@ -181,6 +188,28 @@ def race_class(value: Column) -> Column:
   return (
     when(is_valid_class, number)
     .otherwise(lit(None))
+  )
+
+
+def race_type(name: Column, country_code: Column) -> Column:
+  """UK/Irish race type from the race name, the source has no field for it:
+  '... Handicap Hurdle' -> HURDLE, '... Novices' Chase' -> CHASE,
+  '... Open NH Flat Race' / '... (Pro/Am) Flat Race' -> N_H_FLAT, no type word
+  -> FLAT. Same values as horse_form.run_type. NULL outside UK/Ireland, where
+  names don't follow these words (French trotting races, US 'Race 1 - Claiming')."""
+  type_word = lower(regexp_extract(name, RACE_TYPE_PATTERN, 1))
+  is_uk_ire = coalesce(country_code.isin(UK_IRE_COUNTRY_CODES), lit(False))
+  is_known = is_uk_ire & name.isNotNull()
+  is_hurdle = type_word.startswith("hurdle")
+  is_chase = type_word.endswith("chase")
+  is_nh_flat = type_word != ""
+
+  return (
+    when(~is_known, lit(None))
+    .when(is_hurdle, lit("HURDLE"))
+    .when(is_chase, lit("CHASE"))
+    .when(is_nh_flat, lit("N_H_FLAT"))
+    .otherwise(lit("FLAT"))
   )
 
 

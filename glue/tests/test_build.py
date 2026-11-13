@@ -16,7 +16,7 @@ import pytest
 from pyspark.sql.functions import col
 
 from conftest import FIXTURES
-from data_jockey import build, raw_schemas
+from data_jockey import build, conversions, raw_schemas
 from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl
 
 RACE_FILES = sorted(FIXTURES.glob("past/races/date=2026-11-10/*.json"))
@@ -172,6 +172,27 @@ def test_horse_form(tables):
   assert form.where("race_date IS NULL").count() == 0
   assert form.where("odds IS NOT NULL AND odds_decimal IS NULL").count() == 0
   assert form.where("distance IS NOT NULL AND distance_yards IS NULL").count() == 0
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_race_type_matches_source_run_type(request, fixture):
+  """The source only gives a race's type in each runner's previous_results,
+  which for a past race includes the race itself: race_type (from the name)
+  must agree with it."""
+  built = request.getfixturevalue(fixture)
+  run_types = built["horse_form"].select("race_id", "run_type").distinct()
+  uk_ire = col("country_code").isin(conversions.UK_IRE_COUNTRY_CODES)
+  races = built["races"].where(uk_ire)
+  checked = races.join(run_types, "race_id").where("run_type IS NOT NULL").collect()
+  assert checked
+  for race in checked:
+    assert race["race_type"] == race["run_type"], race["name"]
+
+
+def test_race_type_null_outside_uk_ire(tables):
+  for race_id in (FR_RACE, US_RACE):
+    (race,) = _rows(tables["races"], race_id=race_id)
+    assert race["race_type"] is None
 
 
 def test_dimension_names(tables):
