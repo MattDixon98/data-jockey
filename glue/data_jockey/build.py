@@ -4,9 +4,16 @@ Pure transformations, no I/O: the Glue job reads the raw JSON (with the
 schemas in raw_schemas) and writes what comes back here, and the tests run the
 same functions against the fixtures.
 
-Every run rebuilds from all of past/, so each table is de-duplicated on its
-key, keeping the copy from the most recent race file (and, for names, the most
-recent non-null value).
+Every run rebuilds from every raw file: past/, today/ and the future/ t-N
+snapshots. A race has one file per snapshot, so each race is first cut down to
+its most trusted file (past > today > t-1 > t-2 > t-3, see
+conversions.snapshot_rank) and only that file's runners, prizes and form are
+used: entries dropped between t-3 and t-1 don't linger, and results (finishing
+positions, winning time) only ever come from past. Racecards are cut down the
+same way, per date.
+
+After that each table is de-duplicated on its key, keeping the copy from the
+most recent race (and, for names, the most recent non-null value).
 """
 
 from pyspark.sql import Column, DataFrame, Window
@@ -23,6 +30,7 @@ from pyspark.sql.functions import (
 )
 from pyspark.sql.functions import filter as spark_filter
 from pyspark.sql.functions import max as spark_max
+from pyspark.sql.functions import min as spark_min
 from pyspark.sql.types import StructType
 
 from data_jockey import conversions as conv
@@ -50,6 +58,53 @@ def conform(df: DataFrame, schema: StructType) -> DataFrame:
     columns.append(column)
 
   return df.select(columns)
+
+
+# --- Snapshots --------------------------------------------------------------
+
+
+def with_snapshot(raw: DataFrame) -> DataFrame:
+  """Adds `snapshot` (past, today, t-N) and `snapshot_rank` from source_file."""
+  snapshot = conv.snapshot(col("source_file"))
+  rank = conv.snapshot_rank(snapshot)
+  return raw.withColumn("snapshot", snapshot).withColumn("snapshot_rank", rank)
+
+
+def most_trusted(df: DataFrame, keys: list[str]) -> DataFrame:
+  """Every row from the most trusted snapshot of each key (lowest snapshot_rank), so all of one file's rows are kept together."""
+  window = Window.partitionBy(*keys)
+  best_rank = spark_min("snapshot_rank").over(window)
+  return (
+    df.withColumn("_best_rank", best_rank)
+    .where(col("snapshot_rank") == col("_best_rank"))
+    .drop("_best_rank")
+  )
+
+
+def race_files(races_raw: DataFrame) -> DataFrame:
+  """One raw race file per race: its most trusted snapshot."""
+  df = with_snapshot(races_raw)
+  df = df.withColumn("race_id", col("race_summary.race_summary_reference.id"))
+  df = most_trusted(df, ["race_id"])
+  return df.drop("race_id")
+
+
+def racecard_files(racecards: DataFrame) -> DataFrame:
+  """Each date's meetings from its most trusted racecard file."""
+  df = with_snapshot(racecards)
+  df = df.withColumn("card_date", to_date(col("meeting_summary.date")))
+  df = most_trusted(df, ["card_date"])
+  return df.drop("card_date")
+
+
+def from_past(value: Column) -> Column:
+  """`value` if the row comes from past/, else NULL: results only come from past."""
+  is_past = col("snapshot") == "past"
+
+  return (
+    when(is_past, value)
+    .otherwise(lit(None))
+  )
 
 
 # --- Flattening -------------------------------------------------------------
@@ -91,10 +146,11 @@ def _card_races(racecards: DataFrame) -> DataFrame:
 
 
 def _rides(races: DataFrame) -> DataFrame:
-  """One row per ride, with its race id and date."""
+  """One row per ride, with its race id, date and snapshot."""
   return races.select(
     col("race_summary.race_summary_reference.id").alias("race_id"),
     to_date("race_summary.date").alias("race_date"),
+    col("snapshot"),
     explode("rides").alias("ride"),
   )
 
@@ -153,6 +209,18 @@ def select_race_columns() -> list[Column]:
     .otherwise(lit(None))
   )
 
+  # A result is only trusted from past/; a later crawl can still show an
+  # upcoming race as abandoned.
+  stage_status = conv.result_status(col("race_summary.race_stage"))
+  is_past = col("snapshot") == "past"
+  is_early_complete = (stage_status == "complete") & ~is_past
+  result_status = (
+    when(is_early_complete, lit("incomplete"))
+    .otherwise(stage_status)
+  )
+  winning_time = conv.empty_to_null(col("race_summary.winning_time"))
+  winning_time_seconds = conv.time_seconds(col("race_summary.winning_time"))
+
   return [
     col("race_summary.race_summary_reference.id").alias("race_id"),
     col("race_summary.meeting_summary_reference.id").alias("meeting_id"),
@@ -168,13 +236,14 @@ def select_race_columns() -> list[Column]:
     conv.empty_to_null(col("race_summary.going")).alias("going"),
     col("race_summary.has_handicap").alias("has_handicap"),
     col("race_summary.race_stage").alias("race_stage"),
-    conv.result_status(col("race_summary.race_stage")).alias("result_status"),
+    result_status.alias("result_status"),
     col("race_summary.ride_count").alias("ride_count"),
     col("number_of_placed_rides").alias("placed_count"),
-    conv.empty_to_null(col("race_summary.winning_time")).alias("winning_time"),
-    conv.time_seconds(col("race_summary.winning_time")).alias("winning_time_seconds"),
+    from_past(winning_time).alias("winning_time"),
+    from_past(winning_time_seconds).alias("winning_time_seconds"),
     col("on_course_book_percentage").alias("book_percentage"),
     forecast.alias("betting_forecast"),
+    col("snapshot"),
   ]
 
 
@@ -192,6 +261,8 @@ def select_runner_columns() -> list[Column]:
   stats = col("ride.horse_lifetime_stats")
   insight_types = transform(col("ride.insights"), lambda insight: insight.type)
   known_insight_types = spark_filter(insight_types, lambda insight_type: insight_type.isNotNull())
+  finish_position = conv.finish_position(col("ride.ride_status"), col("ride.finish_position"))
+  non_finisher_reason = conv.non_finisher_reason(col("ride.casualty"))
 
   return [
     col("ride.ride_reference.id").alias("ride_id"),
@@ -204,8 +275,8 @@ def select_runner_columns() -> list[Column]:
     col("ride.cloth_number").alias("cloth_number"),
     col("ride.draw_number").alias("draw"),
     col("ride.ride_status").alias("status"),
-    conv.finish_position(col("ride.ride_status"), col("ride.finish_position")).alias("finish_position"),
-    conv.non_finisher_reason(col("ride.casualty")).alias("non_finisher_reason"),
+    from_past(finish_position).alias("finish_position"),
+    from_past(non_finisher_reason).alias("non_finisher_reason"),
     col("ride.horse.age").alias("horse_age"),
     conv.empty_to_null(col("ride.handicap")).alias("weight"),
     conv.weight_lbs(col("ride.handicap")).alias("weight_lbs"),
@@ -219,6 +290,7 @@ def select_runner_columns() -> list[Column]:
     conv.lifetime_stat(stats, "win_count").alias("lifetime_wins"),
     conv.lifetime_stat(stats, "place_count").alias("lifetime_places"),
     known_insight_types.alias("insights"),
+    col("snapshot"),
   ]
 
 
@@ -342,7 +414,12 @@ def horse_form(races_raw: DataFrame) -> DataFrame:
 
 
 def build_all(racecards: DataFrame, races_raw: DataFrame) -> dict[str, DataFrame]:
-  """Every clean table, keyed by table name (unconformed column order)."""
+  """Every clean table, keyed by table name (unconformed column order).
+
+  Takes the raw reads (with source_file) of every snapshot.
+  """
+  racecards = racecard_files(racecards)
+  races_raw = race_files(races_raw)
   return {
     "courses": courses(racecards),
     "meetings": meetings(racecards),

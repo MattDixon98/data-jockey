@@ -1,11 +1,16 @@
 """Builds every clean table from the fixtures and checks the results.
 
-The fixtures are one day's racecard (2026-11-10) and three of its races:
+Most tests use one day's past racecard (2026-11-10) and three of its races:
 947829 (a UK jumps race with non-runners and fallers), 948441 (French, with
 unplaced positions not recorded) and 948466 (USA).
+
+The snapshot tests use every crawl of two more races, with their racecards:
+948004 (Thurles, 2026-11-12: t-1, today and past) and 946551 (2026-11-14:
+t-3, t-2 and t-1, with four entries dropped by t-1).
 """
 
 import json
+import shutil
 
 import pytest
 from pyspark.sql.functions import col
@@ -14,9 +19,18 @@ from conftest import FIXTURES
 from data_jockey import build, raw_schemas
 from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl
 
-RACE_FILES = sorted(FIXTURES.glob("races/*/*.json"))
-CARD_FILES = sorted(FIXTURES.glob("racecards/*/*.json"))
+RACE_FILES = sorted(FIXTURES.glob("past/races/date=2026-11-10/*.json"))
+CARD_FILES = sorted(FIXTURES.glob("past/racecards/date=2026-11-10/*.json"))
 UK_RACE, FR_RACE, US_RACE = 947829, 948441, 948466
+
+SNAPSHOT_DATES = ("2026-11-12", "2026-11-14")
+SNAPSHOT_RACE_FILES = sorted(
+  path for date in SNAPSHOT_DATES for path in FIXTURES.glob(f"*/races/date={date}/*.json")
+)
+SNAPSHOT_CARD_FILES = sorted(
+  path for date in SNAPSHOT_DATES for path in FIXTURES.glob(f"*/racecards/date={date}/*.json")
+)
+SETTLED_RACE, UPCOMING_RACE = 948004, 946551
 
 
 def _raw_json(race_id):
@@ -35,14 +49,30 @@ def target_schemas(spark):
   spark.sql("DROP DATABASE build_check CASCADE")
 
 
-@pytest.fixture(scope="module")
-def tables(spark, target_schemas):
-  cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, CARD_FILES)
-  races = raw_schemas.read_raw(spark, raw_schemas.RACE, RACE_FILES)
+def _build(spark, target_schemas, card_files, race_files):
+  cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, card_files)
+  races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files)
   built = build.build_all(cards, races)
   return {
     name: build.conform(df, target_schemas[name]).cache() for name, df in built.items()
   }
+
+
+@pytest.fixture(scope="module")
+def tables(spark, target_schemas):
+  return _build(spark, target_schemas, CARD_FILES, RACE_FILES)
+
+
+@pytest.fixture(scope="module")
+def snapshot_tables(spark, target_schemas):
+  return _build(spark, target_schemas, SNAPSHOT_CARD_FILES, SNAPSHOT_RACE_FILES)
+
+
+def _snapshot_json(race_id, snapshot):
+  suffix = "" if snapshot in ("past", "today") else f"-{snapshot}"
+  phase = "future" if snapshot.startswith("t-") else snapshot
+  (path,) = FIXTURES.glob(f"{phase}/races/*/{race_id}{suffix}.json")
+  return json.loads(path.read_text())
 
 
 def _rows(df, **where):
@@ -163,3 +193,74 @@ def test_conform_rejects_missing_columns(spark, target_schemas):
   df = spark.createDataFrame([(1,)], "jockey_id BIGINT")
   with pytest.raises(ValueError, match="name"):
     build.conform(df, target_schemas["jockeys"])
+
+
+# --- Snapshots --------------------------------------------------------------
+
+
+@pytest.mark.parametrize("name", list(TABLE_KEYS))
+def test_snapshot_keys_are_unique(snapshot_tables, name):
+  df = snapshot_tables[name]
+  keys = TABLE_KEYS[name]
+  assert df.select(*keys).distinct().count() == df.count()
+
+
+def test_past_beats_today_and_earlier_snapshots(snapshot_tables):
+  (race,) = _rows(snapshot_tables["races"], race_id=SETTLED_RACE)
+  assert race["snapshot"] == "past"
+  assert race["result_status"] == "complete"
+  assert race["winning_time_seconds"] > 0
+  assert race["country_code"] == "Eire"
+
+  runners = _rows(snapshot_tables["runners"], race_id=SETTLED_RACE)
+  starting_prices = {
+    ride["ride_reference"]["id"]: ride["betting"].get("current_odds")
+    for ride in _snapshot_json(SETTLED_RACE, "past")["rides"]
+  }
+  assert {r["ride_id"]: r["odds"] for r in runners} == starting_prices
+  assert {r["snapshot"] for r in runners} == {"past"}
+  assert any(r["finish_position"] == 1 for r in runners)
+
+
+def test_upcoming_race_uses_latest_snapshot_only(snapshot_tables):
+  (race,) = _rows(snapshot_tables["races"], race_id=UPCOMING_RACE)
+  assert race["snapshot"] == "t-1"
+  assert race["result_status"] == "incomplete"
+  assert race["course_id"]
+
+  t1_rides = {r["ride_reference"]["id"] for r in _snapshot_json(UPCOMING_RACE, "t-1")["rides"]}
+  t3_rides = {r["ride_reference"]["id"] for r in _snapshot_json(UPCOMING_RACE, "t-3")["rides"]}
+  assert t3_rides - t1_rides, "fixture should have entries dropped by t-1"
+
+  runners = _rows(snapshot_tables["runners"], race_id=UPCOMING_RACE)
+  assert {r["ride_id"] for r in runners} == t1_rides
+  assert all(r["odds_decimal"] for r in runners if r["status"] == "RUNNER")
+  assert all(r["finish_position"] is None for r in runners)
+
+
+def test_meetings_come_from_latest_racecard(snapshot_tables):
+  t1_card = json.loads(
+    (FIXTURES / "future/racecards/date=2026-11-14/racecards-t-1.json").read_text()
+  )
+  t1_meetings = {m["meeting_summary"]["meeting_reference"]["id"] for m in t1_card}
+  upcoming = snapshot_tables["meetings"].where("meeting_date = DATE'2026-11-14'")
+  assert {r.meeting_id for r in upcoming.collect()} == t1_meetings
+
+
+def test_results_only_come_from_past(spark, target_schemas, tmp_path):
+  """The 2026-11-10 UK race (a full result) saved as if it were a today/ crawl."""
+  (source,) = [f for f in RACE_FILES if f.stem == str(UK_RACE)]
+  today_file = tmp_path / "today/races/date=2026-11-10" / source.name
+  today_file.parent.mkdir(parents=True)
+  shutil.copy(source, today_file)
+
+  built = _build(spark, target_schemas, CARD_FILES, [today_file])
+  (race,) = _rows(built["races"], race_id=UK_RACE)
+  assert race["snapshot"] == "today"
+  assert race["result_status"] == "incomplete"
+  assert race["winning_time"] is None and race["winning_time_seconds"] is None
+
+  runners = _rows(built["runners"], race_id=UK_RACE)
+  assert runners
+  assert all(r["finish_position"] is None for r in runners)
+  assert all(r["non_finisher_reason"] is None for r in runners)

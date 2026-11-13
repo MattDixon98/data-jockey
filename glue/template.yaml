@@ -80,7 +80,7 @@ Resources:
     Type: AWS::Glue::Job
     Properties:
       Name: data-jockey-rebuild-clean-tables
-      Description: Rebuilds the clean Iceberg tables from raw past/ JSON
+      Description: Rebuilds the clean Iceberg tables from the raw JSON (past, today and future snapshots)
       Role: !GetAtt GlueJobRole.Arn
       GlueVersion: "5.0"
       WorkerType: G.1X
@@ -105,9 +105,9 @@ Resources:
         --warehouse: !Sub s3://${WarehouseBucket}/warehouse/
         --database: !Ref Database
 
-  # Daily rebuild after the morning crawls (06:00-06:20; only the 06:00 one,
-  # yesterday's results, writes to past/). Role name is generated from the stack
-  # name, like GlueJobRole.
+  # Daily rebuild after the morning crawls (06:00-06:20: yesterday's results to
+  # past/, today and t-1..t-3 to today/ and future/). Role name is generated
+  # from the stack name, like GlueJobRole.
   ScheduleRole:
     Type: AWS::IAM::Role
     Properties:

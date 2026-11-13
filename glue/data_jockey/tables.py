@@ -20,6 +20,13 @@ Conventions:
   kept in the clean tables and filtered out by the model and website.
 - Only races with result_status = 'complete' have trustworthy finishing
   positions.
+- Races and runners include upcoming races, from the most trusted snapshot
+  crawled so far (past > today > t-1 > t-2 > t-3), named in `snapshot`.
+  Results (finish_position, non_finisher_reason, winning_time) are only ever
+  filled from past.
+- New columns go at the end of a table's DDL, so an existing table can be
+  brought up to date with ALTER TABLE ... ADD COLUMNS (the job's CREATE TABLE IF
+  NOT EXISTS never changes a table that already exists).
 """
 
 import re
@@ -71,7 +78,8 @@ TABLES: dict[str, str] = {
           winning_time_seconds    DOUBLE,
           book_percentage         DOUBLE  COMMENT 'On-course overround',
           betting_forecast        STRING,
-          verdict                 STRING  COMMENT 'Racecard verdict, HTML stripped'
+          verdict                 STRING  COMMENT 'Racecard verdict, HTML stripped',
+          snapshot                STRING  COMMENT 'Crawl the row is from: past, today, t-1, t-2 or t-3'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
@@ -93,7 +101,7 @@ TABLES: dict[str, str] = {
           weight                  STRING  COMMENT 'Raw st-lb, e.g. 8-12',
           weight_lbs              INT     COMMENT 'NULL when the source gives 0-0',
           official_rating         INT,
-          odds                    STRING  COMMENT 'Starting price as given, e.g. 9/2',
+          odds                    STRING  COMMENT 'As given, e.g. 9/2: starting price from past, latest forecast price before that',
           odds_decimal            DOUBLE,
           favourite               STRING  COMMENT 'f = favourite, j = joint, c = co-favourite',
           headgear                STRING  COMMENT 'Symbols, e.g. "b,t"; first-time-ness is in insights',
@@ -101,7 +109,8 @@ TABLES: dict[str, str] = {
           lifetime_runs           INT,
           lifetime_wins           INT,
           lifetime_places         INT,
-          insights                ARRAY<STRING>  COMMENT 'e.g. HOT_JOCKEY, FIRST_TIME_HOOD'
+          insights                ARRAY<STRING>  COMMENT 'e.g. HOT_JOCKEY, FIRST_TIME_HOOD',
+          snapshot                STRING  COMMENT 'Crawl the row is from: past, today, t-1, t-2 or t-3'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
@@ -180,6 +189,13 @@ TABLE_KEYS: dict[str, list[str]] = {
   "prizes": ["race_id", "position"],
   "horse_form": ["horse_id", "race_id"],
 }
+
+
+def ddl_columns(name: str) -> list[str]:
+  """A table's column names, in order, read from its DDL."""
+  ddl = TABLES[name]
+  column_list = ddl[ddl.index("(") + 1:ddl.index(") USING")]
+  return re.findall(r"^\s*(\w+)\s+[A-Z]", column_list, flags=re.M)
 
 
 def local_ddl(name: str, db: str) -> str:

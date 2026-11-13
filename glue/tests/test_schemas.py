@@ -15,11 +15,11 @@ from pyspark.sql.types import ArrayType, StructType
 
 from conftest import FIXTURES
 from data_jockey import raw_schemas
-from data_jockey.tables import TABLES, local_ddl
+from data_jockey.tables import TABLES, ddl_columns, local_ddl
 
 SOURCES = {
-  "racecards": (raw_schemas.RACECARD_MEETING, sorted(FIXTURES.glob("racecards/*/*.json"))),
-  "races": (raw_schemas.RACE, sorted(FIXTURES.glob("races/*/*.json"))),
+  "racecards": (raw_schemas.RACECARD_MEETING, sorted(FIXTURES.glob("*/racecards/*/*.json"))),
+  "races": (raw_schemas.RACE, sorted(FIXTURES.glob("*/races/*/*.json"))),
 }
 
 
@@ -92,7 +92,7 @@ def test_table_ddl_is_valid(spark):
   spark.sql("CREATE DATABASE IF NOT EXISTS ddl_check")
   for name in TABLES:
     spark.sql(local_ddl(name, "ddl_check"))
-    assert spark.table(f"ddl_check.{name}").columns
+    assert spark.table(f"ddl_check.{name}").columns == ddl_columns(name)
   spark.sql("DROP DATABASE ddl_check CASCADE")
 
 
@@ -102,7 +102,7 @@ def test_rows_know_their_source_file(spark, source):
   df = raw_schemas.read_raw(spark, schema, files)
   source_files = [row.source_file for row in df.select("source_file").distinct().collect()]
 
-  # Spark gives a URI (file:/..., s3://...); compare from past/ onwards.
-  expected = sorted(path.relative_to(FIXTURES.parent).as_posix() for path in files)
+  # Spark gives a URI (file:/..., s3://...); compare from past/ etc. onwards.
+  expected = sorted(path.relative_to(FIXTURES).as_posix() for path in files)
   actual = sorted(source_file.split("/fixtures/", 1)[1] for source_file in source_files)
   assert actual == expected

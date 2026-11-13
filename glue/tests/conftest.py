@@ -3,7 +3,8 @@ from pathlib import Path
 import pytest
 from pyspark.sql import SparkSession
 
-FIXTURES = Path(__file__).parent / "fixtures" / "past"
+# Real crawler output in the raw bucket's layout: {past,today,future}/{racecards,races}/date=*/
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(scope="session")
