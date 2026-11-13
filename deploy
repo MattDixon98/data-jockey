@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+# Deploy one subproject (or all of them) from the repo root.
+#
+#   ./deploy crawlers    crawler Lambda + schedules  (crawlers: npm run deploy)
+#   ./deploy glue        Glue rebuild job + package  (glue/scripts/deploy.sh)
+#   ./deploy model       model training job + wheel  (model/scripts/deploy.sh)
+#   ./deploy all         all three, in that order
+#
+# Each subproject keeps its own deploy; this only runs it from the right
+# directory. `all` goes in dependency order: the crawler stack owns the raw
+# bucket the Glue stack reads, and the Glue stack owns the clean bucket the
+# model stack uses.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "$0")" && pwd)"
+TARGETS=(crawlers glue model)
+
+usage() {
+  sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+  exit 1
+}
+
+deploy() {
+  local target=$1
+  echo "== Deploying $target"
+  case "$target" in
+    crawlers) (cd "$ROOT/crawlers" && npm run deploy) ;;
+    glue) "$ROOT/glue/scripts/deploy.sh" ;;
+    model) "$ROOT/model/scripts/deploy.sh" ;;
+  esac
+}
+
+if [ $# -ne 1 ]; then
+  usage
+fi
+if [ "$1" != "all" ] && [[ ! " ${TARGETS[*]} " =~ " $1 " ]]; then
+  echo "Unknown target: $1" >&2
+  usage
+fi
+
+if [ "$1" = "all" ]; then
+  for target in "${TARGETS[@]}"; do
+    deploy "$target"
+  done
+else
+  deploy "$1"
+fi
