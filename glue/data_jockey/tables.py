@@ -96,7 +96,7 @@ TABLES: dict[str, str] = {
           cloth_number            INT,
           draw                    INT,
           status                  STRING  COMMENT 'RUNNER, NONRUNNER or WITHDRAWN',
-          finish_position         INT     COMMENT 'NULL if not recorded or did not finish',
+          finish_position         INT     COMMENT 'Official (amended) placing; NULL if not recorded or did not finish',
           non_finisher_reason     STRING  COMMENT 'PulledUp, Fell, UnseatedRider, RanOut, BroughtDown...',
           horse_age               INT,
           weight                  STRING  COMMENT 'Raw st-lb, e.g. 8-12',

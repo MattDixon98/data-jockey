@@ -160,6 +160,22 @@ def test_race_class(spark, raw, expected):
 
 
 @pytest.mark.parametrize(
+  "position, amended_position, expected",
+  [
+    (2, 1, 1),  # awarded the race
+    (1, 2, 2),  # demoted
+    (3, 3, 3),
+    (4, None, 4),  # most races: no amended_position
+    (0, None, 0),  # still 0; finish_position turns it into NULL
+    (5, 0, 5),
+  ],
+)
+def test_official_position(spark, position, amended_position, expected):
+  df = spark.createDataFrame([(position, amended_position)], "p bigint, a bigint")
+  assert df.select(c.official_position(col("p"), col("a"))).first()[0] == expected
+
+
+@pytest.mark.parametrize(
   "name, country_code, expected",
   [
     ("Tips For Every Race At raceday-ready.com Handicap Hurdle", "ENG", "HURDLE"),

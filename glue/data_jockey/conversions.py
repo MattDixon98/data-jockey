@@ -160,6 +160,19 @@ def prize_currency(prize: Column) -> Column:
   return upper(currency)
 
 
+def official_position(position: Column, amended_position: Column) -> Column:
+  """The result after any stewards' inquiry. The source only sends
+  amended_position for some races (e.g. 948004: Fratas finished 2nd and was
+  awarded the race); when it is there it is the official placing, otherwise
+  position is."""
+  has_amendment = amended_position > 0
+
+  return (
+    when(has_amendment, amended_position)
+    .otherwise(position)
+  )
+
+
 def finish_position(status: Column, position: Column) -> Column:
   """The source uses 0 for non-runners, non-finishers and positions that
   weren't recorded (common in France); all of those become NULL."""

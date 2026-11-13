@@ -10,7 +10,8 @@ def select_runner_columns() -> list[Column]:
   stats = col("ride.horse_lifetime_stats")
   insight_types = transform(col("ride.insights"), lambda insight: insight.type)
   known_insight_types = spark_filter(insight_types, lambda insight_type: insight_type.isNotNull())
-  finish_position = conv.finish_position(col("ride.ride_status"), col("ride.finish_position"))
+  position = conv.official_position(col("ride.finish_position"), col("ride.amended_position"))
+  finish_position = conv.finish_position(col("ride.ride_status"), position)
   non_finisher_reason = conv.non_finisher_reason(col("ride.casualty"))
 
   return [

@@ -7,7 +7,7 @@ from data_jockey.build.utilities import latest, rides
 
 def select_horse_form_columns() -> list[Column]:
   # Form rows have no ride status; 0 still means no recorded position.
-  position = col("result.position")
+  position = conv.official_position(col("result.position"), col("result.amended_position"))
   has_position = position > 0
   finish_position = (
     when(has_position, position)
