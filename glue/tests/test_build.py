@@ -264,3 +264,55 @@ def test_results_only_come_from_past(spark, target_schemas, tmp_path):
   assert runners
   assert all(r["finish_position"] is None for r in runners)
   assert all(r["non_finisher_reason"] is None for r in runners)
+
+
+# --- Odds -------------------------------------------------------------------
+
+
+def _prices(race_json):
+  return {
+    ride["ride_reference"]["id"]: ride["betting"].get("current_odds")
+    for ride in race_json["rides"]
+    if ride["betting"].get("current_odds")
+  }
+
+
+def test_odds_snapshots_keep_every_priced_crawl(snapshot_tables):
+  rows = _rows(snapshot_tables["odds_snapshots"], race_id=SETTLED_RACE)
+  by_snapshot = {}
+  for row in rows:
+    by_snapshot.setdefault(row["snapshot"], {})[row["ride_id"]] = row["odds"]
+
+  assert set(by_snapshot) == {"t-1", "today", "past"}
+  for snapshot, prices in by_snapshot.items():
+    assert prices == _prices(_snapshot_json(SETTLED_RACE, snapshot))
+  assert all(row["odds_decimal"] > 1 for row in rows)
+  ranks = {row["snapshot"]: row["snapshot_rank"] for row in rows}
+  assert ranks == {"past": 0, "today": 1, "t-1": 2}
+
+
+def test_odds_snapshots_skip_unpriced_crawls(snapshot_tables):
+  rows = _rows(snapshot_tables["odds_snapshots"], race_id=UPCOMING_RACE)
+  assert {row["snapshot"] for row in rows} == {"t-1"}
+  assert {row["ride_id"] for row in rows} == set(_prices(_snapshot_json(UPCOMING_RACE, "t-1")))
+
+
+def test_odds_history_follows_the_on_course_market(snapshot_tables):
+  rows = _rows(snapshot_tables["odds_history"], race_id=SETTLED_RACE)
+  expected = {
+    ride["ride_reference"]["id"]: ride["betting"]["historical_odds"]
+    for ride in _snapshot_json(SETTLED_RACE, "past")["rides"]
+    if ride["betting"].get("historical_odds")
+  }
+  assert expected, "fixture should have on-course prices"
+
+  actual = {}
+  for row in sorted(rows, key=lambda r: (r["ride_id"], r["seq"])):
+    actual.setdefault(row["ride_id"], []).append(row["odds"])
+  assert actual == expected
+  assert min(row["seq"] for row in rows) == 1
+
+
+def test_odds_history_only_from_past(snapshot_tables):
+  upcoming = _rows(snapshot_tables["odds_history"], race_id=UPCOMING_RACE)
+  assert upcoming == []

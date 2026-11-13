@@ -24,4 +24,10 @@ SELECT 'prizes', COUNT(*)
 FROM (SELECT race_id, position FROM data_jockey.prizes GROUP BY race_id, position HAVING COUNT(*) > 1)
 UNION ALL
 SELECT 'horse_form', COUNT(*)
-FROM (SELECT horse_id, race_id FROM data_jockey.horse_form GROUP BY horse_id, race_id HAVING COUNT(*) > 1);
+FROM (SELECT horse_id, race_id FROM data_jockey.horse_form GROUP BY horse_id, race_id HAVING COUNT(*) > 1)
+UNION ALL
+SELECT 'odds_snapshots', COUNT(*)
+FROM (SELECT ride_id, snapshot FROM data_jockey.odds_snapshots GROUP BY ride_id, snapshot HAVING COUNT(*) > 1)
+UNION ALL
+SELECT 'odds_history', COUNT(*)
+FROM (SELECT ride_id, seq FROM data_jockey.odds_history GROUP BY ride_id, seq HAVING COUNT(*) > 1);

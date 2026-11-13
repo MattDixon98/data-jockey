@@ -25,6 +25,8 @@ from data_jockey.build.horse_form import horse_form
 from data_jockey.build.horses import horses
 from data_jockey.build.jockeys import jockeys
 from data_jockey.build.meetings import meetings
+from data_jockey.build.odds_history import odds_history
+from data_jockey.build.odds_snapshots import odds_snapshots
 from data_jockey.build.prizes import prizes
 from data_jockey.build.races import races
 from data_jockey.build.runners import runners
@@ -36,8 +38,10 @@ __all__ = ["build_all", "conform", "latest"]
 def build_all(racecards: DataFrame, races_raw: DataFrame) -> dict[str, DataFrame]:
   """Every clean table, keyed by table name (unconformed column order).
 
-  Takes the raw reads (with source_file) of every snapshot.
+  Takes the raw reads (with source_file) of every snapshot. Everything but
+  odds_snapshots uses only each race's most trusted file.
   """
+  all_race_files = races_raw
   racecards = racecard_files(racecards)
   races_raw = race_files(races_raw)
   return {
@@ -50,4 +54,6 @@ def build_all(racecards: DataFrame, races_raw: DataFrame) -> dict[str, DataFrame
     "trainers": trainers(races_raw),
     "prizes": prizes(races_raw),
     "horse_form": horse_form(races_raw),
+    "odds_snapshots": odds_snapshots(all_race_files),
+    "odds_history": odds_history(races_raw),
   }

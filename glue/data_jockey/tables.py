@@ -174,6 +174,39 @@ TABLES: dict[str, str] = {
       ) USING iceberg
       PARTITIONED BY (years(race_date))
   """,
+  # Each runner's price at every crawl that had one, to show how the odds
+  # moved up to the off: the forecast price at t-1 and today (occasionally
+  # t-2), then the starting price from past. t-2/t-3 crawls rarely have prices.
+  "odds_snapshots": """
+      CREATE TABLE IF NOT EXISTS {db}.odds_snapshots (
+          ride_id         BIGINT,
+          race_id         BIGINT,
+          race_date       DATE,
+          horse_id        BIGINT,
+          snapshot        STRING  COMMENT 't-N, today or past (past = starting price)',
+          snapshot_rank   INT     COMMENT 'past 0, today 1, t-1 2...; sort descending for time order',
+          status          STRING  COMMENT 'RUNNER, NONRUNNER or WITHDRAWN at that crawl',
+          odds            STRING,
+          odds_decimal    DOUBLE,
+          favourite       STRING  COMMENT 'f = favourite, j = joint, c = co-favourite'
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
+  # The on-course market from the past file (betting.historical_odds): every
+  # price shown for a runner before the off, opening show first. The starting
+  # price itself is runners.odds.
+  "odds_history": """
+      CREATE TABLE IF NOT EXISTS {db}.odds_history (
+          ride_id         BIGINT,
+          race_id         BIGINT,
+          race_date       DATE,
+          horse_id        BIGINT,
+          seq             INT     COMMENT '1 = opening show, counting up to the last show before the off',
+          odds            STRING,
+          odds_decimal    DOUBLE
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
 }
 
 
@@ -188,6 +221,8 @@ TABLE_KEYS: dict[str, list[str]] = {
   "trainers": ["trainer_id"],
   "prizes": ["race_id", "position"],
   "horse_form": ["horse_id", "race_id"],
+  "odds_snapshots": ["ride_id", "snapshot"],
+  "odds_history": ["ride_id", "seq"],
 }
 
 

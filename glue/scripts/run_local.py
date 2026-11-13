@@ -64,7 +64,7 @@ def main(raw_dir: str, out_dir: str) -> None:
     else:
       status = f"DUPLICATE KEYS ({rows - distinct_keys})"
 
-    line = f"{name:11} {rows:>9,} rows  keys {status}"
+    line = f"{name:14} {rows:>9,} rows  keys {status}"
     if null_cols:
       line += f"  all-null: {null_cols}"
     print(line)
