@@ -91,6 +91,7 @@ def targets(all_race_files: DataFrame, races: DataFrame) -> DataFrame:
     "race_id",
     "country_code",
     "race_type",
+    "has_handicap",
     col("going_shortcode").alias("card_going_shortcode"),
   )
   df = df.join(race_info, "race_id")
@@ -183,6 +184,10 @@ def select_runner_feature_columns() -> list[Column]:
   weight_diff = coalesce(col("weight_lbs") - field_weight, lit(0.0))
   rating_change = coalesce(col("official_rating") - col("last_type_rating"), lit(0))
 
+  # In a handicap the weights are set to cancel out the rating gap, so the
+  # model needs to know which races are handicaps.
+  has_handicap = coalesce(col("has_handicap"), lit(False))
+
   def zero_if_null(name: str) -> Column:
     return coalesce(col(name), lit(0))
 
@@ -210,6 +215,7 @@ def select_runner_feature_columns() -> list[Column]:
     col("jockey_id"),
     col("trainer_id"),
     col("race_type"),
+    has_handicap.alias("has_handicap"),
     col("distance_band"),
     col("going_group"),
     field_size.alias("field_size"),

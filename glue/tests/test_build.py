@@ -439,6 +439,15 @@ def test_runner_features_dont_see_the_race_itself(snapshot_tables):
   assert compared == 10
 
 
+def test_runner_features_carry_has_handicap(tables, snapshot_tables):
+  (race,) = _rows(tables["races"], race_id=UK_RACE)
+  features = _rows(tables["runner_features"], race_id=UK_RACE)
+  assert {r["has_handicap"] for r in features} == {race["has_handicap"]}
+  # 948004 is a handicap hurdle.
+  settled = _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE)
+  assert {r["has_handicap"] for r in settled} == {True}
+
+
 def test_runner_features_ratings_compare_within_race_type(snapshot_tables):
   # Fratas: rated 115 over hurdles; last ran on the flat (76), last hurdle 112.
   (row,) = _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE, snapshot="t-1", horse_id=1082171)

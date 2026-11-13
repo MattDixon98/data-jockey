@@ -222,6 +222,7 @@ TABLES: dict[str, str] = {
           jockey_id           BIGINT  COMMENT 'NULL until booked (t-3/t-2)',
           trainer_id          BIGINT,
           race_type           STRING,
+          has_handicap        BOOLEAN COMMENT 'Weights set to even out ratings; FALSE if unknown',
           distance_band       STRING  COMMENT 'e.g. 9-11f',
           going_group         STRING  COMMENT 'FIRM, GOOD, GOOD_TO_SOFT, SOFT, HEAVY, STANDARD; NULL if unknown',
           field_size          INT     COMMENT 'Runners at this snapshot',
