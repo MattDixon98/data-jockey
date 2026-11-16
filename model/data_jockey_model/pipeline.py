@@ -241,7 +241,7 @@ def render_report(
     decision,
     "## Data\n\n" + _table(["Period", "From", "To", "Races", "Runners"], periods),
     "## Penalty (L2), chosen on the validation weeks\n\n" + _table(["L2", "Validation log-loss", ""], penalty_rows),
-    "## Test weeks\n\nLower log-loss is better. SP has its margin removed by simple division.\n\n"
+    "## Test weeks\n\nLower log-loss is better. SP has its margin removed with Shin's method.\n\n"
     + _table(score_header, score_rows),
     "## Calibration (test weeks)\n\nRunners grouped by the probability this model gave them, and how often they won.\n\n"
     + _table(["Predicted", "Runners", "Average predicted", "Actually won"], calibration_rows),

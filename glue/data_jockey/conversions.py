@@ -12,6 +12,7 @@ the ones seen in the real crawler output.
 
 from pyspark.sql import Column
 from pyspark.sql.functions import (
+  aggregate,
   array_join,
   coalesce,
   concat,
@@ -20,12 +21,16 @@ from pyspark.sql.functions import (
   lower,
   regexp_extract,
   regexp_replace,
+  sequence,
+  size,
+  sqrt,
   transform,
   trim,
   upper,
   when,
 )
 from pyspark.sql.functions import filter as spark_filter
+from pyspark.sql.functions import greatest, least
 from pyspark.sql.functions import round as spark_round
 
 YARDS_PER_MILE = 1760
@@ -156,6 +161,59 @@ def fractional_odds(decimal: Column) -> Column:
     price = price.when(decimal < halfway, lit(this_price))
 
   return price.otherwise(lit(ODDS_LADDER[-1]))
+
+
+# Shin's method: repeats of the update for z (30 settle a real race to ~1e-13)
+# and the range z is kept in, so odd prices can't push it towards 1.
+SHIN_ITERATIONS = 30
+SHIN_MAX_Z = 0.5
+
+
+def _shin_root(implied: Column, book: Column, z: Column) -> Column:
+  """sqrt(z^2 + 4(1 - z) p^2 / B): the part of Shin's formula shared by z and the probabilities."""
+  return sqrt(z * z + lit(4.0) * (lit(1.0) - z) * implied * implied / book)
+
+
+def shin_z(implied: Column) -> Column:
+  """Shin's z for one race, from the array of its runners' 1/decimal odds.
+
+  z is how lopsided the bookmakers' margin is: 0 spreads it evenly
+  (proportional), higher takes more of it off the longshots. It has no
+  closed form, so the update z = (sum of roots - 2) / (runners - 2) is
+  repeated SHIN_ITERATIONS times, inside Spark (aggregate over a sequence).
+  Two-runner races can't be solved this way and get 0 (proportional)."""
+  book = aggregate(implied, lit(0.0), lambda total, p: total + p)
+  runners = size(implied)
+
+  def update(z: Column, _: Column) -> Column:
+    roots = aggregate(implied, lit(0.0), lambda total, p: total + _shin_root(p, book, z))
+    next_z = (roots - lit(2.0)) / (runners - lit(2))
+    return least(greatest(next_z, lit(0.0)), lit(SHIN_MAX_Z))
+
+  iterated = aggregate(sequence(lit(1), lit(SHIN_ITERATIONS)), lit(0.0), update)
+  has_enough_runners = runners > 2
+
+  return (
+    when(has_enough_runners, iterated)
+    .otherwise(lit(0.0))
+  )
+
+
+def shin_probability(implied: Column, book: Column, z: Column) -> Column:
+  """One runner's fair win probability under Shin's method, from its 1/odds,
+  the race's book (sum of 1/odds) and the race's z. The race's runners add up
+  to 1 (to ~1e-13; build/model_value.py rescales away the remainder).
+  z = 0 (two runners, or no margin to take off) is an even split: 1/odds over
+  the book. Shin's formula gives 1/odds over sqrt(book) there, which doesn't add up to 1."""
+  root = _shin_root(implied, book, z)
+  shin = (root - z) / (lit(2.0) * (lit(1.0) - z))
+  proportional = implied / book
+  is_even_split = z == lit(0.0)
+
+  return (
+    when(is_even_split, proportional)
+    .otherwise(shin)
+  )
 
 
 def _distance_part(distance: Column, unit: str) -> Column:

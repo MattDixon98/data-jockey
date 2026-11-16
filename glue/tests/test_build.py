@@ -19,6 +19,7 @@ from pyspark.sql.functions import sum as spark_sum
 from conftest import FIXTURES
 from data_jockey import build, conversions, raw_schemas
 from data_jockey.build.model_odds import model_odds
+from data_jockey.build.model_value import MIN_EXPECTED_VALUE, MIN_MODEL_PROB
 from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl
 
 RACE_FILES = sorted(FIXTURES.glob("past/races/date=2026-11-10/*.json"))
@@ -55,6 +56,12 @@ def target_schemas(spark):
   spark.sql("DROP DATABASE build_check CASCADE")
 
 
+def _release(built):
+  """Free a build's cached tables once its tests are done."""
+  for df in built.values():
+    df.unpersist()
+
+
 def _build(spark, target_schemas, card_files, race_files):
   cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, card_files)
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files)
@@ -66,12 +73,16 @@ def _build(spark, target_schemas, card_files, race_files):
 
 @pytest.fixture(scope="module")
 def tables(spark, target_schemas):
-  return _build(spark, target_schemas, CARD_FILES, RACE_FILES)
+  built = _build(spark, target_schemas, CARD_FILES, RACE_FILES)
+  yield built
+  _release(built)
 
 
 @pytest.fixture(scope="module")
 def snapshot_tables(spark, target_schemas):
-  return _build(spark, target_schemas, SNAPSHOT_CARD_FILES, SNAPSHOT_RACE_FILES)
+  built = _build(spark, target_schemas, SNAPSHOT_CARD_FILES, SNAPSHOT_RACE_FILES)
+  yield built
+  _release(built)
 
 
 def _snapshot_json(race_id, snapshot):
@@ -309,15 +320,18 @@ def test_results_only_come_from_past(spark, target_schemas, tmp_path):
   shutil.copy(source, today_file)
 
   built = _build(spark, target_schemas, CARD_FILES, [today_file])
-  (race,) = _rows(built["races"], race_id=UK_RACE)
-  assert race["snapshot"] == "today"
-  assert race["result_status"] == "incomplete"
-  assert race["winning_time"] is None and race["winning_time_seconds"] is None
+  try:
+    (race,) = _rows(built["races"], race_id=UK_RACE)
+    assert race["snapshot"] == "today"
+    assert race["result_status"] == "incomplete"
+    assert race["winning_time"] is None and race["winning_time_seconds"] is None
 
-  runners = _rows(built["runners"], race_id=UK_RACE)
-  assert runners
-  assert all(r["finish_position"] is None for r in runners)
-  assert all(r["non_finisher_reason"] is None for r in runners)
+    runners = _rows(built["runners"], race_id=UK_RACE)
+    assert runners
+    assert all(r["finish_position"] is None for r in runners)
+    assert all(r["non_finisher_reason"] is None for r in runners)
+  finally:
+    _release(built)
 
 
 # --- Odds -------------------------------------------------------------------
@@ -581,3 +595,68 @@ def test_each_race_priced_by_the_newest_model_trained_before_it(snapshot_tables)
   }
   # 12 Nov: the older model had finished training (9 Nov), the newer one hadn't.
   assert used == {("2026-11-12", "2026-11-10", False), ("2026-11-14", "2026-11-13", False)}
+
+
+# --- Model value ------------------------------------------------------------
+
+
+def _fully_priced(built):
+  """(race_id, snapshot) pairs where every model_odds runner has a price."""
+  prices = {(r.ride_id, r.snapshot): r.odds_decimal for r in built["odds_snapshots"].collect()}
+  races = {}
+  for row in built["model_odds"].collect():
+    priced = (prices.get((row.ride_id, row.snapshot)) or 0) > 1
+    races.setdefault((row.race_id, row.snapshot), []).append(priced)
+  return {key for key, flags in races.items() if all(flags)}
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_model_value_only_for_fully_priced_races(request, fixture):
+  built = request.getfixturevalue(fixture)
+  value = built["model_value"]
+  pairs = {(r.race_id, r.snapshot) for r in value.select("race_id", "snapshot").distinct().collect()}
+  assert pairs and pairs == _fully_priced(built)
+  assert value.where(col("snapshot") == "t-3").count() == 0
+
+
+def test_model_value_market_is_sp_after_the_race(snapshot_tables):
+  markets = {(r.snapshot, r.market) for r in snapshot_tables["model_value"].select("snapshot", "market").distinct().collect()}
+  assert ("past", "SP") in markets and ("t-1", "forecast") in markets
+  assert all((snapshot == "past") == (market == "SP") for snapshot, market in markets)
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_model_value_numbers(request, fixture):
+  value = request.getfixturevalue(fixture)["model_value"]
+  totals = value.groupBy("race_id", "snapshot").agg(spark_sum("market_prob").alias("total")).collect()
+  assert all(abs(row.total - 1.0) < 1e-9 for row in totals)
+  for row in value.collect():
+    assert row.book_percentage > 100
+    assert row.edge == pytest.approx(row.model_prob / row.market_prob - 1)
+    assert row.expected_value == pytest.approx(row.model_prob * row.market_odds_decimal - 1)
+    expected_flag = row.expected_value >= MIN_EXPECTED_VALUE and row.model_prob >= MIN_MODEL_PROB
+    assert row.undervalued == expected_flag
+
+
+def test_model_value_grades_every_snapshot_once_run(snapshot_tables):
+  """948004 has been run: Fratas (awarded the race) won at every snapshot; the
+  late non-runner Mastertown Miss had a t-1 price but no result (bet void).
+  946551 hasn't been run yet, so nothing is graded."""
+  value = snapshot_tables["model_value"]
+  settled = {}
+  for row in value.where(col("race_id") == SETTLED_RACE).collect():
+    settled[(row.horse_id, row.snapshot)] = row
+  fratas = 1082171
+  assert {settled[(fratas, s)].won for s in ("t-1", "today", "past")} == {True}
+  assert settled[(fratas, "t-1")].finish_position == 1
+
+  past = _snapshot_json(SETTLED_RACE, "past")["rides"]
+  non_runner = next(r for r in past if r["ride_status"] == "NONRUNNER")["horse"]["horse_reference"]["id"]
+  assert settled[(non_runner, "t-1")].won is None
+  assert (non_runner, "past") not in settled
+
+  graded = [r for r in settled.values() if r.won is not None]
+  assert sum(r.won for r in graded if r.snapshot == "past") == 1
+
+  upcoming = value.where(col("race_id") == UPCOMING_RACE).collect()
+  assert upcoming and all(r.won is None and r.finish_position is None for r in upcoming)

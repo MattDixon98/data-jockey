@@ -279,6 +279,34 @@ TABLES: dict[str, str] = {
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
+  # Our probability next to the market's (SP for past rows, the forecast price
+  # for t-1/today), margin removed with Shin's method, and the undervalued flag
+  # (see build/model_value.py). Only races fully priced at that snapshot.
+  "model_value": """
+      CREATE TABLE IF NOT EXISTS {db}.model_value (
+          ride_id             BIGINT,
+          snapshot            STRING  COMMENT 't-N, today or past',
+          snapshot_rank       INT,
+          race_id             BIGINT,
+          race_date           DATE,
+          horse_id            BIGINT,
+          model_version       STRING,
+          in_sample           BOOLEAN COMMENT 'The model was trained on this race; leave out of the scorecard',
+          model_prob          DOUBLE,
+          model_odds          STRING,
+          market              STRING  COMMENT 'SP (past) or forecast (t-1, today)',
+          market_odds         STRING  COMMENT 'As quoted, e.g. 9/2',
+          market_odds_decimal DOUBLE,
+          market_prob         DOUBLE  COMMENT 'Margin removed (Shin); sums to 1 per race and snapshot',
+          book_percentage     DOUBLE  COMMENT 'Sum of 1/odds x 100 before the margin came off, e.g. 118',
+          edge                DOUBLE  COMMENT 'model_prob / market_prob - 1',
+          expected_value      DOUBLE  COMMENT 'Average return of a 1 unit bet at market_odds if model_prob is right',
+          undervalued         BOOLEAN COMMENT 'expected_value >= 10% and model_prob >= 5%',
+          won                 BOOLEAN COMMENT 'Once the race is run; NULL before, and for runners that did not run',
+          finish_position     INT
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
 }
 
 
@@ -297,6 +325,7 @@ TABLE_KEYS: dict[str, list[str]] = {
   "odds_history": ["ride_id", "seq"],
   "runner_features": ["ride_id", "snapshot"],
   "model_odds": ["ride_id", "snapshot"],
+  "model_value": ["ride_id", "snapshot"],
 }
 
 

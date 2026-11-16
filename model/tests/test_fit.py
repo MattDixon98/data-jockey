@@ -53,3 +53,16 @@ def test_standardiser_leaves_constant_inputs_alone():
   scaled = standardiser.apply(races).inputs
   assert np.allclose(scaled[:, 0], [-1.0, 1.0])
   assert np.allclose(scaled[:, 1], [0.0, 0.0])
+
+
+def test_shin_matches_the_glue_example():
+  """Same 124% book race as glue/tests/test_conversions.py: the two sides must agree."""
+  from data_jockey_model.evaluate import shin_probabilities
+
+  decimals = np.array([2.5, 3.5, 5.0, 7.0, 11.0, 15.0, 26.0, 51.0, 2.0, 2.0])
+  races = Races(np.zeros((10, 1)), np.array([0, 8]), np.array([0, 8]))  # an 8-runner and a 2-runner race
+  probs = shin_probabilities(1 / decimals, races)
+  expected = [0.3461, 0.2418, 0.1638, 0.1119, 0.0653, 0.0440, 0.0203, 0.0068]
+  assert np.allclose(probs[:8], expected, atol=1e-4)
+  assert np.allclose(probs[8:], [0.5, 0.5])  # two runners: an even split
+  assert np.allclose(np.add.reduceat(probs, races.starts), 1.0)

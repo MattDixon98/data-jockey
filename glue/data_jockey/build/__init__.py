@@ -26,6 +26,7 @@ from data_jockey.build.horses import horses
 from data_jockey.build.jockeys import jockeys
 from data_jockey.build.meetings import meetings
 from data_jockey.build.model_odds import model_odds
+from data_jockey.build.model_value import model_value
 from data_jockey.build.odds_history import odds_history
 from data_jockey.build.odds_snapshots import odds_snapshots
 from data_jockey.build.prizes import prizes
@@ -41,7 +42,8 @@ def build_all(racecards: DataFrame, races_raw: DataFrame, models: list[dict] | N
   """Every clean table, keyed by table name (unconformed column order).
 
   `models` are the promoted win-odds models (models.usable_models). Without
-  them there is no model_odds entry, and every other table still builds.
+  them there are no model_odds or model_value entries, and every other table
+  still builds.
 
   Takes the raw reads (with source_file) of every snapshot. Everything but
   odds_snapshots and runner_features use only each race's most trusted file.
@@ -70,4 +72,10 @@ def build_all(racecards: DataFrame, races_raw: DataFrame, models: list[dict] | N
   )
   if models:
     tables["model_odds"] = model_odds(tables["runner_features"], models)
+    tables["model_value"] = model_value(
+      tables["model_odds"],
+      tables["odds_snapshots"],
+      tables["runners"],
+      tables["races"],
+    )
   return tables

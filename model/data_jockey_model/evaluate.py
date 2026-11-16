@@ -6,9 +6,8 @@
   actually won (20% shots should win about 20% of the time).
 - top pick: how often each method's most likely runner won.
 
-SP here has its margin removed by simple division (each 1/odds over the
-race total); Shin's method, which also corrects the favourite-longshot bias,
-comes with the SP comparison table (TODO 3e).
+SP has its margin removed with Shin's method, the same as the rebuild's
+model_value table (glue conversions.shin_z), so the numbers agree.
 """
 
 from __future__ import annotations
@@ -18,6 +17,9 @@ import numpy as np
 from data_jockey_model.fit import Races
 
 CALIBRATION_BANDS = [0.0, 0.05, 0.1, 0.2, 0.3, 0.5, 1.0]
+# Same settings as the glue side (conversions.SHIN_ITERATIONS / SHIN_MAX_Z).
+SHIN_ITERATIONS = 30
+SHIN_MAX_Z = 0.5
 
 
 def log_loss(probs: np.ndarray, races: Races) -> float:
@@ -29,17 +31,39 @@ def random_log_loss(races: Races) -> float:
   return float(np.log(races.sizes).mean())
 
 
+def shin_probabilities(implied: np.ndarray, races: Races) -> np.ndarray:
+  """Shin's method for every race at once: more of the margin comes off the
+  longshots than an even split would. `implied` is each runner's 1/odds."""
+  sizes = races.sizes
+  book = np.repeat(np.add.reduceat(implied, races.starts), sizes)
+
+  def roots(z_per_runner: np.ndarray) -> np.ndarray:
+    return np.sqrt(z_per_runner ** 2 + 4 * (1 - z_per_runner) * implied ** 2 / book)
+
+  z = np.zeros(races.race_count)
+  has_enough_runners = sizes > 2
+  for _ in range(SHIN_ITERATIONS):
+    root_totals = np.add.reduceat(roots(np.repeat(z, sizes)), races.starts)
+    next_z = (root_totals - 2) / np.where(has_enough_runners, sizes - 2, 1)
+    z = np.where(has_enough_runners, np.clip(next_z, 0.0, SHIN_MAX_Z), 0.0)
+
+  z_per_runner = np.repeat(z, sizes)
+  probs = (roots(z_per_runner) - z_per_runner) / (2 * (1 - z_per_runner))
+  totals = np.add.reduceat(probs, races.starts)
+  return probs / np.repeat(totals, sizes)
+
+
 def sp_probabilities(sp_decimal: np.ndarray, races: Races) -> tuple[np.ndarray, np.ndarray]:
-  """SP as probabilities (1/odds, scaled to sum to 1 per race), and which
-  races have a full set of prices (only those can be compared)."""
+  """SP as probabilities (Shin, summing to 1 per race), and which races have a
+  full set of prices (only those can be compared)."""
   implied = 1.0 / sp_decimal
   has_price = np.isfinite(implied) & (implied > 0)
   race_fully_priced = np.minimum.reduceat(has_price.astype(int), races.starts) == 1
 
-  implied = np.where(has_price, implied, 0.0)
-  totals = np.add.reduceat(implied, races.starts)
-  totals = np.where(totals > 0, totals, 1.0)
-  return implied / np.repeat(totals, races.sizes), race_fully_priced
+  # Unpriced runners get a tiny stand-in so the maths runs; their races are
+  # left out of every comparison anyway (race_fully_priced).
+  implied = np.where(has_price, implied, 1e-9)
+  return shin_probabilities(implied, races), race_fully_priced
 
 
 def subset(races: Races, keep: np.ndarray, *row_arrays: np.ndarray) -> tuple:
