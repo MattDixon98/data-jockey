@@ -39,4 +39,11 @@ SELECT 'model_odds', COUNT(*)
 FROM (SELECT ride_id, snapshot FROM data_jockey.model_odds GROUP BY ride_id, snapshot HAVING COUNT(*) > 1)
 UNION ALL
 SELECT 'model_value', COUNT(*)
-FROM (SELECT ride_id, snapshot FROM data_jockey.model_value GROUP BY ride_id, snapshot HAVING COUNT(*) > 1);
+FROM (SELECT ride_id, snapshot FROM data_jockey.model_value GROUP BY ride_id, snapshot HAVING COUNT(*) > 1)
+UNION ALL
+SELECT 'model_scorecard', COUNT(*)
+FROM (SELECT view, period_type, period, race_group FROM data_jockey.model_scorecard
+  GROUP BY view, period_type, period, race_group HAVING COUNT(*) > 1)
+UNION ALL
+SELECT 'model_calibration', COUNT(*)
+FROM (SELECT view, source, band FROM data_jockey.model_calibration GROUP BY view, source, band HAVING COUNT(*) > 1);

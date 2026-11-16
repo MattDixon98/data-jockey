@@ -13,4 +13,6 @@ UNION ALL SELECT 'odds_history', COUNT(*) FROM data_jockey.odds_history
 UNION ALL SELECT 'runner_features', COUNT(*) FROM data_jockey.runner_features
 UNION ALL SELECT 'model_odds', COUNT(*) FROM data_jockey.model_odds
 UNION ALL SELECT 'model_value', COUNT(*) FROM data_jockey.model_value
+UNION ALL SELECT 'model_scorecard', COUNT(*) FROM data_jockey.model_scorecard
+UNION ALL SELECT 'model_calibration', COUNT(*) FROM data_jockey.model_calibration
 ORDER BY table_name;

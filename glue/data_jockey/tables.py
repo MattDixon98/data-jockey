@@ -307,6 +307,47 @@ TABLES: dict[str, str] = {
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
+  # How good our odds and undervalued picks have been, out of sample (see
+  # build/model_scorecard.py). One row per view (after_race = vs SP on the
+  # final field, site_pick = the race-morning flag), period and race group.
+  "model_scorecard": """
+      CREATE TABLE IF NOT EXISTS {db}.model_scorecard (
+          view                  STRING  COMMENT 'after_race (vs SP) or site_pick (race-morning row, else t-1)',
+          period_type           STRING  COMMENT 'all, month or model_version',
+          period                STRING  COMMENT 'all, 2026-11, or a model version',
+          race_group            STRING  COMMENT 'all, flat or jumps',
+          first_race            DATE,
+          last_race             DATE,
+          races                 BIGINT,
+          runners               BIGINT,
+          log_loss_model        DOUBLE  COMMENT 'Average -ln(our probability for the winner); lower is better',
+          log_loss_market       DOUBLE  COMMENT 'The same for the market (SP, or the forecast for site_pick)',
+          top_pick_won_model    DOUBLE  COMMENT 'Share of races our favourite won',
+          top_pick_won_market   DOUBLE  COMMENT 'Share of races the market favourite won',
+          bets                  BIGINT  COMMENT 'Undervalued runners that ran (non-runners are void)',
+          bets_won              BIGINT,
+          expected_wins_market  DOUBLE  COMMENT 'Wins SP expected from those bets (sum of SP probabilities)',
+          expected_wins_model   DOUBLE  COMMENT 'Wins we expected (sum of our probabilities)',
+          wins_z                DOUBLE  COMMENT '(bets_won - expected_wins_market) / its standard deviation; above ~2 is unlikely to be luck',
+          profit_units          DOUBLE  COMMENT '1 unit on every bet, settled at SP',
+          roi                   DOUBLE  COMMENT 'profit_units / bets',
+          roi_low               DOUBLE  COMMENT '95% range on roi (normal approximation)',
+          roi_high              DOUBLE
+      ) USING iceberg
+  """,
+  # Calibration, all time: runners grouped by the probability we (or the
+  # market) gave them, and how often they actually won.
+  "model_calibration": """
+      CREATE TABLE IF NOT EXISTS {db}.model_calibration (
+          view          STRING  COMMENT 'after_race or site_pick',
+          source        STRING  COMMENT 'model (ours) or market (SP, or the forecast for site_pick)',
+          band          INT     COMMENT '1 = 0%-5%, 2 = 5%-10%... (sort order)',
+          band_label    STRING,
+          runners       BIGINT,
+          predicted     DOUBLE  COMMENT 'Average probability given',
+          actual        DOUBLE  COMMENT 'Share that won'
+      ) USING iceberg
+  """,
 }
 
 
@@ -326,6 +367,8 @@ TABLE_KEYS: dict[str, list[str]] = {
   "runner_features": ["ride_id", "snapshot"],
   "model_odds": ["ride_id", "snapshot"],
   "model_value": ["ride_id", "snapshot"],
+  "model_scorecard": ["view", "period_type", "period", "race_group"],
+  "model_calibration": ["view", "source", "band"],
 }
 
 

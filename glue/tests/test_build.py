@@ -10,6 +10,7 @@ t-3, t-2 and t-1, with four entries dropped by t-1).
 """
 
 import json
+import math
 import shutil
 
 import pytest
@@ -19,7 +20,8 @@ from pyspark.sql.functions import sum as spark_sum
 from conftest import FIXTURES
 from data_jockey import build, conversions, raw_schemas
 from data_jockey.build.model_odds import model_odds
-from data_jockey.build.model_value import MIN_EXPECTED_VALUE, MIN_MODEL_PROB
+from data_jockey.build.model_scorecard import graded_view_rows, model_calibration, model_scorecard
+from data_jockey.build.model_value import MIN_EXPECTED_VALUE, MIN_MODEL_PROB, model_value
 from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl
 
 RACE_FILES = sorted(FIXTURES.glob("past/races/date=2026-11-10/*.json"))
@@ -56,33 +58,29 @@ def target_schemas(spark):
   spark.sql("DROP DATABASE build_check CASCADE")
 
 
-def _release(built):
-  """Free a build's cached tables once its tests are done."""
-  for df in built.values():
-    df.unpersist()
-
-
 def _build(spark, target_schemas, card_files, race_files):
+  """Every table, built once and checkpointed: the data is kept but the long
+  query plan behind it (raw JSON -> ... -> model_scorecard) is dropped, so each
+  test runs on a small table instead of re-planning the whole chain."""
   cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, card_files)
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files)
   built = build.build_all(cards, races, [MODEL])
-  return {
-    name: build.conform(df, target_schemas[name]).cache() for name, df in built.items()
+  checkpointed = {
+    name: build.conform(df, target_schemas[name]).localCheckpoint() for name, df in built.items()
   }
+  # build_all's own caches were only needed to build the checkpoints.
+  spark.catalog.clearCache()
+  return checkpointed
 
 
 @pytest.fixture(scope="module")
 def tables(spark, target_schemas):
-  built = _build(spark, target_schemas, CARD_FILES, RACE_FILES)
-  yield built
-  _release(built)
+  return _build(spark, target_schemas, CARD_FILES, RACE_FILES)
 
 
 @pytest.fixture(scope="module")
 def snapshot_tables(spark, target_schemas):
-  built = _build(spark, target_schemas, SNAPSHOT_CARD_FILES, SNAPSHOT_RACE_FILES)
-  yield built
-  _release(built)
+  return _build(spark, target_schemas, SNAPSHOT_CARD_FILES, SNAPSHOT_RACE_FILES)
 
 
 def _snapshot_json(race_id, snapshot):
@@ -102,11 +100,17 @@ def test_every_table_is_built(tables):
   assert set(tables) == set(TABLES)
 
 
+# Empty on the standard fixtures by design: the fixture model was trained on
+# the only settled race. Their keys are checked on the out-of-sample build.
+EMPTY_ON_FIXTURES = {"model_scorecard", "model_calibration"}
+
+
 @pytest.mark.parametrize("name", list(TABLE_KEYS))
 def test_keys_are_unique_and_not_null(tables, name):
   df = tables[name]
   keys = TABLE_KEYS[name]
-  assert df.count() > 0
+  if name not in EMPTY_ON_FIXTURES:
+    assert df.count() > 0
   null_key_conditions = [f"{key} IS NULL" for key in keys]
   any_key_null = " OR ".join(null_key_conditions)
   assert df.where(any_key_null).count() == 0
@@ -320,18 +324,15 @@ def test_results_only_come_from_past(spark, target_schemas, tmp_path):
   shutil.copy(source, today_file)
 
   built = _build(spark, target_schemas, CARD_FILES, [today_file])
-  try:
-    (race,) = _rows(built["races"], race_id=UK_RACE)
-    assert race["snapshot"] == "today"
-    assert race["result_status"] == "incomplete"
-    assert race["winning_time"] is None and race["winning_time_seconds"] is None
+  (race,) = _rows(built["races"], race_id=UK_RACE)
+  assert race["snapshot"] == "today"
+  assert race["result_status"] == "incomplete"
+  assert race["winning_time"] is None and race["winning_time_seconds"] is None
 
-    runners = _rows(built["runners"], race_id=UK_RACE)
-    assert runners
-    assert all(r["finish_position"] is None for r in runners)
-    assert all(r["non_finisher_reason"] is None for r in runners)
-  finally:
-    _release(built)
+  runners = _rows(built["runners"], race_id=UK_RACE)
+  assert runners
+  assert all(r["finish_position"] is None for r in runners)
+  assert all(r["non_finisher_reason"] is None for r in runners)
 
 
 # --- Odds -------------------------------------------------------------------
@@ -534,6 +535,7 @@ def test_no_models_means_no_model_odds(spark):
   built = build.build_all(cards, races)
   assert "model_odds" not in built
   assert "runner_features" in built
+  spark.catalog.clearCache()  # build_all registers caches even though nothing ran
 
 
 @pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
@@ -660,3 +662,105 @@ def test_model_value_grades_every_snapshot_once_run(snapshot_tables):
 
   upcoming = value.where(col("race_id") == UPCOMING_RACE).collect()
   assert upcoming and all(r.won is None and r.finish_position is None for r in upcoming)
+
+
+# --- Scorecard --------------------------------------------------------------
+
+# Trained up to 9 Nov, so 948004 (12 Nov, run) is out of sample for it.
+OLDER_MODEL = {**MODEL, "version": "2026-11-10", "trained_on": {**MODEL["trained_on"], "to": "2026-11-09"}}
+
+
+@pytest.fixture(scope="module")
+def out_of_sample(snapshot_tables):
+  """model_value and the graded view rows, priced with OLDER_MODEL."""
+  odds = model_odds(snapshot_tables["runner_features"], [OLDER_MODEL])
+  value = model_value(odds, snapshot_tables["odds_snapshots"], snapshot_tables["runners"], snapshot_tables["races"])
+  value = value.localCheckpoint()
+  graded = graded_view_rows(value, snapshot_tables["races"]).localCheckpoint()
+  return value, graded
+
+
+def test_in_sample_races_are_never_scored(snapshot_tables):
+  # The fixture model was trained on 948004, the only settled race.
+  assert snapshot_tables["model_scorecard"].count() == 0
+  assert snapshot_tables["model_calibration"].count() == 0
+
+
+def test_views_use_past_and_the_race_morning_row(out_of_sample):
+  _, graded = out_of_sample
+  snapshots = {(r.view, r.race_id, r.snapshot) for r in graded.select("view", "race_id", "snapshot").distinct().collect()}
+  # 948004 had a today crawl; 946551 hasn't been run, so isn't graded.
+  assert snapshots == {("after_race", SETTLED_RACE, "past"), ("site_pick", SETTLED_RACE, "today")}
+
+
+def test_site_pick_falls_back_to_t1(out_of_sample, snapshot_tables):
+  value, _ = out_of_sample
+  no_today = value.where(col("snapshot") != "today")
+  graded = graded_view_rows(no_today, snapshot_tables["races"])
+  site_pick = {r.snapshot for r in graded.where(col("view") == "site_pick").select("snapshot").distinct().collect()}
+  assert site_pick == {"t-1"}
+
+
+def test_scorecard_numbers_match_the_rows(out_of_sample):
+  _, graded = out_of_sample
+  scorecard = model_scorecard(graded)
+  for view in ("after_race", "site_pick"):
+    rows = graded.where(col("view") == view).collect()
+    (card,) = [
+      r for r in scorecard.where(col("view") == view).collect()
+      if r.period_type == "all" and r.race_group == "all"
+    ]
+    winner = next(r for r in rows if r.won)
+    assert card.races == 1 and card.runners == len(rows)
+    assert card.log_loss_model == pytest.approx(-math.log(winner.model_prob))
+    assert card.log_loss_market == pytest.approx(-math.log(winner.market_prob))
+
+    bets = [r for r in rows if r.undervalued and r.sp_decimal is not None]
+    profit = sum((r.sp_decimal - 1) if r.won else -1 for r in bets)
+    assert card.bets == len(bets)
+    assert card.bets_won == sum(r.won for r in bets)
+    if bets:
+      assert card.profit_units == pytest.approx(profit)
+      assert card.roi == pytest.approx(profit / len(bets))
+      assert card.expected_wins_market == pytest.approx(sum(r.sp_prob for r in bets))
+    # SP is the same for both views: site_pick bets are settled at the race's SP too.
+    assert all(r.sp_prob is not None for r in rows)
+
+
+def test_scorecard_breakdowns(out_of_sample):
+  _, graded = out_of_sample
+  keys = {(r.period_type, r.period, r.race_group) for r in model_scorecard(graded).collect()}
+  periods = {("all", "all"), ("month", "2026-11"), ("model_version", "2026-11-10")}
+  groups = {"all", "jumps"}  # 948004 is a hurdle race
+  assert keys == {(pt, p, g) for pt, p in periods for g in groups}
+
+
+def test_calibration_covers_every_graded_runner(out_of_sample):
+  _, graded = out_of_sample
+  calibration = model_calibration(graded).collect()
+  for view in ("after_race", "site_pick"):
+    runners = graded.where(col("view") == view).count()
+    for source in ("model", "market"):
+      bands = [r for r in calibration if r.view == view and r.source == source]
+      assert sum(r.runners for r in bands) == runners
+      assert all(r.band_label and 0 <= r.actual <= 1 for r in bands)
+
+
+def test_scorecard_tables_match_their_ddl(out_of_sample, target_schemas):
+  _, graded = out_of_sample
+  build.conform(model_scorecard(graded), target_schemas["model_scorecard"]).collect()
+  build.conform(model_calibration(graded), target_schemas["model_calibration"]).collect()
+
+
+@pytest.mark.parametrize(
+  "name, make",
+  [("model_scorecard", model_scorecard), ("model_calibration", model_calibration)],
+)
+def test_scorecard_keys_are_unique_and_not_null(out_of_sample, name, make):
+  _, graded = out_of_sample
+  df = make(graded)
+  keys = TABLE_KEYS[name]
+  assert df.count() > 0
+  any_key_null = " OR ".join(f"{key} IS NULL" for key in keys)
+  assert df.where(any_key_null).count() == 0
+  assert df.select(*keys).distinct().count() == df.count()

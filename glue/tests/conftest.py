@@ -13,8 +13,8 @@ def spark(tmp_path_factory):
     SparkSession.builder.master("local[1]")
     .appName("data-jockey-tests")
     .config("spark.ui.enabled", "false")
-    # Each full build caches every table (16 now, model_odds/model_value have
-    # big plans); the default 1g ran out of heap.
+    # Building every table (model_odds/model_value/scorecard have big plans)
+    # ran the default 1g out of heap.
     .config("spark.driver.memory", "2g")
     .config("spark.sql.shuffle.partitions", "1")
     .config("spark.sql.session.timeZone", "UTC")
