@@ -1,0 +1,7 @@
+# Local development and tests. The Glue Python shell job runs Python 3.9 with
+# the "analytics" library set (numpy, scipy, pandas preinstalled).
+numpy
+scipy
+pandas
+boto3
+pytest

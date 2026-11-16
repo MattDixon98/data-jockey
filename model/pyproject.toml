@@ -1,0 +1,15 @@
+# Packages data_jockey_model as a wheel for the Glue Python shell job
+# (--extra-py-files takes .whl for Python shell jobs). No dependencies are
+# declared: numpy, scipy and pandas come with Glue's "analytics" library set,
+# and listing them would make Glue try to install them.
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-jockey-model"
+version = "0.1.0"
+requires-python = ">=3.9"
+
+[tool.setuptools]
+packages = ["data_jockey_model", "data_jockey_model.aws"]

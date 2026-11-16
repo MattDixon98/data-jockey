@@ -55,7 +55,8 @@ def races(racecards: DataFrame, races_raw: DataFrame) -> DataFrame:
   df = races_raw.select(select_race_columns())
   df = latest(df, ["race_id"], [col("race_date").desc()])
 
-  # The racecard adds course, country, going shortcode, surface and verdict.
+  # The racecard adds course, country (needed for race_type), going shortcode, surface and verdict.
   df = df.join(card_races(racecards), "race_id", "left")
   df = df.withColumn("surface", coalesce("race_surface", "card_surface"))
+  df = df.withColumn("race_type", conv.race_type(col("name"), col("country_code")))
   return df.withColumn("verdict", conv.strip_html(col("card_verdict")))

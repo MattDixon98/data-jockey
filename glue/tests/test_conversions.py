@@ -5,10 +5,11 @@ Each case puts the raw value in a one-row DataFrame, applies the conversion's
 column expression and checks what Spark returns.
 """
 
+import math
 from decimal import Decimal
 
 import pytest
-from pyspark.sql.functions import col
+from pyspark.sql.functions import aggregate, col, lit, posexplode
 
 from data_jockey import conversions as c
 
@@ -157,6 +158,168 @@ def test_non_finisher_reason(spark, raw, expected):
 )
 def test_race_class(spark, raw, expected):
   assert convert(spark, c.race_class, raw) == expected
+
+
+@pytest.mark.parametrize(
+  "position, amended_position, expected",
+  [
+    (2, 1, 1),  # awarded the race
+    (1, 2, 2),  # demoted
+    (3, 3, 3),
+    (4, None, 4),  # most races: no amended_position
+    (0, None, 0),  # still 0; finish_position turns it into NULL
+    (5, 0, 5),
+  ],
+)
+def test_official_position(spark, position, amended_position, expected):
+  df = spark.createDataFrame([(position, amended_position)], "p bigint, a bigint")
+  assert df.select(c.official_position(col("p"), col("a"))).first()[0] == expected
+
+
+@pytest.mark.parametrize(
+  "decimal, expected",
+  [
+    (4.3333, "10/3"),  # exactly on the ladder
+    (7.69, "13/2"),  # 6.69/1 is nearer 13/2 (7.5) than 7/1 (8.0)
+    (7.8, "7/1"),
+    (2.0, "Evens"),
+    (1.96, "Evens"),  # Evens (2.0) and 10/11 (1.909) split at 1.9545
+    (1.95, "10/11"),
+    (1.5, "1/2"),
+    (1.01, "1/10"),  # shorter than the ladder
+    (5000.0, "500/1"),  # longer than the ladder
+    (None, None),
+  ],
+)
+def test_fractional_odds(spark, decimal, expected):
+  assert convert(spark, c.fractional_odds, decimal, "double") == expected
+
+
+def test_fractional_odds_round_trip_the_whole_ladder(spark):
+  """Every ladder price's own decimal comes back as that price."""
+  for price in c.ODDS_LADDER:
+    decimal = 2.0 if price == "Evens" else int(price.split("/")[0]) / int(price.split("/")[1]) + 1
+    assert convert(spark, c.fractional_odds, decimal, "double") == price
+
+
+def _python_shin(decimals, iterations=30):
+  """Shin's method in plain Python, to check the Spark version against."""
+  implied = [1 / d for d in decimals]
+  book = sum(implied)
+  z = 0.0
+  for _ in range(iterations):
+    roots = sum(math.sqrt(z * z + 4 * (1 - z) * p * p / book) for p in implied)
+    z = min(max((roots - 2) / (len(implied) - 2), 0.0), 0.5)
+  probs = [(math.sqrt(z * z + 4 * (1 - z) * p * p / book) - z) / (2 * (1 - z)) for p in implied]
+  return z, probs
+
+
+def _spark_shin(spark, decimals):
+  implied = [1 / d for d in decimals]
+  df = spark.createDataFrame([(implied,)], "implied array<double>")
+  df = df.withColumn("z", c.shin_z(col("implied")))
+  df = df.withColumn("book", aggregate(col("implied"), lit(0.0), lambda total, p: total + p))
+  rows = df.select("z", "book", posexplode("implied").alias("i", "p")).orderBy("i")
+  rows = rows.select("z", c.shin_probability(col("p"), col("book"), col("z")).alias("prob")).collect()
+  return rows[0].z, [row.prob for row in rows]
+
+
+# An 8-runner race at a 124% book: 6/4 fav down to 50/1.
+SHIN_RACE = [2.5, 3.5, 5.0, 7.0, 11.0, 15.0, 26.0, 51.0]
+
+
+def test_shin_matches_plain_python(spark):
+  z, probs = _spark_shin(spark, SHIN_RACE)
+  expected_z, expected_probs = _python_shin(SHIN_RACE)
+  assert z == pytest.approx(expected_z, abs=1e-12)
+  assert probs == pytest.approx(expected_probs, abs=1e-12)
+  assert sum(probs) == pytest.approx(1.0, abs=1e-9)
+
+
+def test_shin_takes_more_margin_off_longshots(spark):
+  _, probs = _spark_shin(spark, SHIN_RACE)
+  book = sum(1 / d for d in SHIN_RACE)
+  proportional = [1 / d / book for d in SHIN_RACE]
+  assert probs[0] > proportional[0]  # favourite: higher than an even split of the margin
+  assert probs[-1] < proportional[-1]  # 50/1 shot: lower
+
+
+def test_shin_two_runner_race_is_proportional(spark):
+  z, probs = _spark_shin(spark, [1.5, 2.5])
+  book = 1 / 1.5 + 1 / 2.5
+  assert z == 0.0
+  assert probs == pytest.approx([1 / 1.5 / book, 1 / 2.5 / book])
+
+
+def test_shin_no_margin_leaves_prices_alone(spark):
+  fair = [2.0, 4.0, 8.0, 8.0]  # 1/2 + 1/4 + 1/8 + 1/8 = 1
+  z, probs = _spark_shin(spark, fair)
+  assert z == pytest.approx(0.0, abs=1e-12)
+  assert probs == pytest.approx([0.5, 0.25, 0.125, 0.125])
+
+
+@pytest.mark.parametrize(
+  "yards, expected",
+  [
+    (1100, "5-6f"),
+    (1320, "5-6f"),
+    (1760, "7-8f"),
+    (2200, "9-11f"),
+    (2788, "12-14f"),
+    (4400, "19-22f"),
+    (7040, "23f+"),
+    (None, None),
+  ],
+)
+def test_distance_band(spark, yards, expected):
+  assert convert(spark, c.distance_band, yards, "int") == expected
+
+
+@pytest.mark.parametrize(
+  "raw, expected",
+  [
+    ("GD", "GOOD"),
+    ("GS", "GOOD_TO_SOFT"),
+    ("YLD", "GOOD_TO_SOFT"),
+    ("SFT", "SOFT"),
+    ("HVY", "HEAVY"),
+    ("GF", "FIRM"),
+    ("ST", "STANDARD"),
+    ("STS", "STANDARD"),
+    ("FST", None),
+    ("", None),
+    (None, None),
+  ],
+)
+def test_going_group(spark, raw, expected):
+  assert convert(spark, c.going_group, raw) == expected
+
+
+@pytest.mark.parametrize(
+  "name, country_code, expected",
+  [
+    ("Tips For Every Race At raceday-ready.com Handicap Hurdle", "ENG", "HURDLE"),
+    ("Railway Bar Lismullen Hurdle (grade 2)", "Eire", "HURDLE"),
+    ("Boyle Sports Handicap Chase (GBB Race)", "ENG", "CHASE"),
+    ("INHSC Supporting Point-To-Points Hunters Chase", "Eire", "CHASE"),
+    ("Grand Steeplechase", "ENG", "CHASE"),
+    ("Paper Chase Handicap Hurdle", "ENG", "HURDLE"),
+    ("1664 Biere Open NH Flat Race (GBB Race)", "ENG", "N_H_FLAT"),
+    ("Sky Sports Racing Sky 415 Open NH Flat Race (AWT) (GBB Race)", "ENG", "N_H_FLAT"),
+    ("BAR 1 Betting Best Odds Guaranteed Overnight (Pro/Am) Flat Race", "Eire", "N_H_FLAT"),
+    ("Fairyhouse Christmas Party December 12th Point-To-Point Flat Race", "Eire", "N_H_FLAT"),
+    ("Kempton Bumper", "ENG", "N_H_FLAT"),
+    ("Irish Stallion Farms EBF Maiden", "Eire", "FLAT"),
+    ("Racing TV Handicap", "Scot", "FLAT"),
+    ("Prix De Vaumas - Attele - Group 3", "FR", None),
+    ("Race 1 - Claiming", "USA", None),
+    ("Some Handicap Hurdle", None, None),
+    (None, "ENG", None),
+  ],
+)
+def test_race_type(spark, name, country_code, expected):
+  df = spark.createDataFrame([(name, country_code)], "name string, country_code string")
+  assert df.select(c.race_type(col("name"), col("country_code"))).first()[0] == expected
 
 
 @pytest.mark.parametrize(

@@ -104,6 +104,8 @@ Resources:
         --raw_bucket: !Ref RawBucketName
         --warehouse: !Sub s3://${WarehouseBucket}/warehouse/
         --database: !Ref Database
+        # Promoted win-odds models from the data-jockey-model stack, used for model_odds.
+        --model_location: !Sub s3://${WarehouseBucket}/model/
 
   # Daily rebuild after the morning crawls (06:00-06:20: yesterday's results to
   # past/, today and t-1..t-3 to today/ and future/). Role name is generated

@@ -16,10 +16,14 @@ based on past performance.
 3. **Process:** AWS Glue (PySpark) jobs flatten and clean the raw data (odds to
    decimal, distances to yards, times to seconds) into Apache Iceberg tables
    that can be queried with Athena.
-4. **Model:** each runner is scored from its form, rating, course, distance and
-   going record, and from jockey and trainer win rates. A horse is flagged as
-   undervalued when its estimated win probability beats the probability implied
-   by its odds.
+4. **Model:** the daily Glue job also builds each runner's features (form, rating
+   against the field, course/distance/ground record, jockey and trainer win
+   rates) using only data from before the race. A model trained monthly on AWS
+   turns those into our own win odds for every runner, which are compared with
+   the market's (the racecard forecast before the race, the starting price
+   after it, with the bookmakers' margin removed). Horses we rate well above
+   the market are flagged as undervalued, and a scorecard tracks how those
+   flags perform. See [model/model_description.md](model/model_description.md).
 5. **Serve:** a Django app with a django-ninja API reads a daily SQLite
    snapshot of the processed tables, so pages load quickly at almost no running
    cost.
@@ -31,6 +35,7 @@ based on past performance.
 | Crawlers       | TypeScript, Node.js 22                                |
 | Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM       |
 | Processing     | AWS Glue (PySpark), Apache Iceberg, Athena            |
+| Modelling      | Python (NumPy, SciPy), AWS Glue Python shell          |
 | Backend & API  | Python, Django, django-ninja                          |
 | Data serving   | SQLite snapshot generated daily from processed tables |
 
@@ -38,15 +43,21 @@ based on past performance.
 
 - ✅ Daily crawling to S3, deployed on AWS, with three months of history backfilled
 - ✅ Glue processing into Iceberg tables, rebuilt daily and queryable in Athena
-- 🚧 Odds snapshots (bringing in `today/` and `future/`)
-- 🚧 Undervalued-runner model
+- ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
+- ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
+- 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
 - 🚧 Django website and API
 
 ## Repository structure
 
 - `crawlers/`: TypeScript crawlers, Lambda entry point and AWS SAM template
-- `glue/`: PySpark Glue job, the `data_jockey` package it uses, tests, Athena checks and AWS SAM template
+- `glue/`: PySpark Glue job, the `data_jockey` package it uses (clean tables, features, model odds and
+  scorecard), tests, Athena checks and AWS SAM template
+- `model/`: monthly model training (Glue Python shell job), its `data_jockey_model` package, tests, AWS SAM
+  template and [model_description.md](model/model_description.md)
 - `backend/`: Django project
+- `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
+  dependency order
 
 *Data is sourced from publicly available racing pages for personal, non-commercial
 portfolio use.*

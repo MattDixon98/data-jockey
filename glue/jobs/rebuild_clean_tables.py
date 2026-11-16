@@ -8,11 +8,19 @@ from data_jockey.tables on the first run; a column added to the DDL later has
 to be added to the live table with ALTER TABLE ... ADD COLUMNS, and the job
 fails until it is.
 
+model_odds is priced with the promoted win-odds models the training job
+publishes under --model_location (promoted/*.json and current.json). If they
+can't be loaded, every other table is still rebuilt, model_odds keeps its
+previous rows, and the job fails at the end saying why.
+
 Needs the data_jockey package on the path (--extra-py-files on Glue).
 """
 
+import json
 import sys
 
+import boto3
+from botocore.exceptions import ClientError
 from awsglue.context import GlueContext
 from awsglue.job import Job
 from awsglue.utils import getResolvedOptions
@@ -21,11 +29,36 @@ from pyspark.context import SparkContext
 from pyspark.sql.functions import lit
 
 from data_jockey import build, raw_schemas
+from data_jockey.models import ModelError, usable_models
 from data_jockey.tables import TABLES, ddl_columns
 
 CATALOG = "glue_catalog"
 
-args = getResolvedOptions(sys.argv, ["JOB_NAME", "raw_bucket", "warehouse", "database"])
+args = getResolvedOptions(sys.argv, ["JOB_NAME", "raw_bucket", "warehouse", "database", "model_location"])
+
+def read_models(location: str) -> list[dict]:
+  """Every promoted model under `location` (s3://bucket/model/): promoted/*.json plus current.json, checked and ordered."""
+  bucket, prefix = location[len("s3://"):].split("/", 1)
+  s3 = boto3.client("s3")
+
+  keys = [f"{prefix}current.json"]
+  for page in s3.get_paginator("list_objects_v2").paginate(Bucket=bucket, Prefix=f"{prefix}promoted/"):
+    for item in page.get("Contents", []):
+      if item["Key"].endswith(".json"):
+        keys.append(item["Key"])
+
+  documents = {}
+  for key in keys:
+    source = f"s3://{bucket}/{key}"
+    try:
+      body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+    except s3.exceptions.NoSuchKey:
+      continue
+    try:
+      documents[source] = json.loads(body)
+    except json.JSONDecodeError as error:
+      raise ModelError(f"{source}: not valid JSON ({error})")
+  return usable_models(documents)
 
 conf = (
   SparkConf()
@@ -43,6 +76,17 @@ glue_context = GlueContext(sc)
 spark = glue_context.spark_session
 job = Job(glue_context)
 job.init(args["JOB_NAME"], args)
+
+# Read the models first, but hold any problem until the end: results,
+# racecards and the rest should still update without them.
+models = None
+model_error = None
+try:
+  models = read_models(args["model_location"])
+  print(f"Models: {[model['version'] for model in models]}")
+except (ModelError, ClientError) as error:
+  model_error = error
+  print(f"Models not loaded, model_odds will be skipped: {error}")
 
 db = f"{CATALOG}.{args['database']}"
 raw_root = f"s3://{args['raw_bucket']}"
@@ -63,7 +107,7 @@ for name, ddl in TABLES.items():
   if missing:
     raise RuntimeError(f"{db}.{name} is missing DDL columns {missing}: ALTER TABLE ... ADD COLUMNS first")
 
-for name, df in build.build_all(racecards, races).items():
+for name, df in build.build_all(racecards, races, models).items():
   table = f"{db}.{name}"
   clean = build.conform(df, spark.table(table).schema)
   # Full rebuild: replace every row in one commit (the old version stays in
@@ -72,3 +116,9 @@ for name, df in build.build_all(racecards, races).items():
   print(f"{table}: {spark.table(table).count()} rows")
 
 job.commit()
+
+if model_error is not None:
+  raise RuntimeError(
+    f"Every table was rebuilt except model_odds, which kept its previous rows: "
+    f"the models couldn't be loaded from {args['model_location']}: {model_error}"
+  )

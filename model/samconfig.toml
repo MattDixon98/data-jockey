@@ -1,0 +1,16 @@
+# Settings for `sam deploy`. Deploy with scripts/deploy.sh, which also builds
+# and uploads the data_jockey_model wheel the job imports.
+# The profile is pinned so deploys always go to the data-jockey AWS account.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "data-jockey-model"
+region = "eu-west-2"
+profile = "data-jockey"
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+s3_prefix = "data-jockey-model"
+confirm_changeset = false
+fail_on_empty_changeset = false

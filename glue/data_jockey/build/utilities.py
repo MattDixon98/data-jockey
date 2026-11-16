@@ -1,9 +1,9 @@
 """Shared building blocks for the table modules: de-duplication, conforming to
-a table's schema, picking each race's most trusted snapshot, and flattening the
-raw racecard and race DataFrames."""
+a table's schema, picking each race's most trusted snapshot, flattening the
+raw racecard and race DataFrames, and point-in-time aggregates (`as_of`)."""
 
 from pyspark.sql import Column, DataFrame, Window
-from pyspark.sql.functions import col, explode, lit, row_number, to_date, when
+from pyspark.sql.functions import col, datediff, explode, lit, row_number, to_date, when
 from pyspark.sql.functions import min as spark_min
 from pyspark.sql.types import StructType
 
@@ -120,11 +120,48 @@ def card_races(racecards: DataFrame) -> DataFrame:
   return latest(races, ["race_id"], [col("meeting_date").desc()]).drop("meeting_date")
 
 
-def rides(races: DataFrame) -> DataFrame:
-  """One row per ride, with its race id, date and snapshot."""
+def rides(races: DataFrame, *race_columns: Column) -> DataFrame:
+  """One row per ride, with its race id, date and snapshot, plus any extra
+  `race_columns` (race-level expressions, e.g. the race_summary's going)."""
   return races.select(
     col("race_summary.race_summary_reference.id").alias("race_id"),
     to_date("race_summary.date").alias("race_date"),
     col("snapshot"),
+    *race_columns,
     explode("rides").alias("ride"),
   )
+
+
+# --- Point in time ----------------------------------------------------------
+
+
+def as_of(history: DataFrame, targets: DataFrame, keys: list[str], aggregates: dict[str, Column]) -> DataFrame:
+  """Aggregates over history known before each target's race day.
+
+  For every distinct (keys, race_date) in `targets`, each aggregate (e.g.
+  `spark_sum("is_win")`, `last("rating", ignorenulls=True)`) is evaluated over
+  the `history` rows with the same keys and an earlier race_date; same-day
+  rows never count, since the crawl only sees a day's results the next
+  morning. Returns keys, race_date and one column per aggregate (NULL, or 0
+  for counts, when there is no earlier history).
+
+  Works by stacking the targets in among the history rows and using a window
+  that ends the day before each row. Aggregates must only read history
+  columns other than race_date: the stacked target rows have NULL there, so
+  they never count, but they do carry a race_date.
+  """
+  history_rows = history.withColumn("_is_target", lit(False))
+  target_rows = targets.select(*keys, "race_date").distinct().withColumn("_is_target", lit(True))
+  stacked = history_rows.unionByName(target_rows, allowMissingColumns=True)
+
+  day_number = datediff(col("race_date"), lit("1970-01-01").cast("date"))
+  stacked = stacked.withColumn("_day", day_number)
+  earlier_days = (
+    Window.partitionBy(*keys)
+    .orderBy("_day")
+    .rangeBetween(Window.unboundedPreceding, -1)
+  )
+
+  columns = [aggregate.over(earlier_days).alias(name) for name, aggregate in aggregates.items()]
+  result = stacked.select(*keys, "race_date", "_is_target", *columns)
+  return result.where(col("_is_target")).drop("_is_target")

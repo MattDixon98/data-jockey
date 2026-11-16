@@ -13,6 +13,9 @@ def spark(tmp_path_factory):
     SparkSession.builder.master("local[1]")
     .appName("data-jockey-tests")
     .config("spark.ui.enabled", "false")
+    # Building every table (model_odds/model_value/scorecard have big plans)
+    # ran the default 1g out of heap.
+    .config("spark.driver.memory", "2g")
     .config("spark.sql.shuffle.partitions", "1")
     .config("spark.sql.session.timeZone", "UTC")
     .config("spark.sql.warehouse.dir", str(tmp_path_factory.mktemp("warehouse")))

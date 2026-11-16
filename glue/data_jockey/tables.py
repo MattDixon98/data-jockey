@@ -79,7 +79,8 @@ TABLES: dict[str, str] = {
           book_percentage         DOUBLE  COMMENT 'On-course overround',
           betting_forecast        STRING,
           verdict                 STRING  COMMENT 'Racecard verdict, HTML stripped',
-          snapshot                STRING  COMMENT 'Crawl the row is from: past, today, t-1, t-2 or t-3'
+          snapshot                STRING  COMMENT 'Crawl the row is from: past, today, t-1, t-2 or t-3',
+          race_type               STRING  COMMENT 'FLAT, HURDLE, CHASE or N_H_FLAT, from the race name; NULL outside UK/IRE'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
@@ -95,7 +96,7 @@ TABLES: dict[str, str] = {
           cloth_number            INT,
           draw                    INT,
           status                  STRING  COMMENT 'RUNNER, NONRUNNER or WITHDRAWN',
-          finish_position         INT     COMMENT 'NULL if not recorded or did not finish',
+          finish_position         INT     COMMENT 'Official (amended) placing; NULL if not recorded or did not finish',
           non_finisher_reason     STRING  COMMENT 'PulledUp, Fell, UnseatedRider, RanOut, BroughtDown...',
           horse_age               INT,
           weight                  STRING  COMMENT 'Raw st-lb, e.g. 8-12',
@@ -158,7 +159,7 @@ TABLES: dict[str, str] = {
           course_shortcode    STRING,
           race_name           STRING,
           race_class          INT,
-          run_type            STRING  COMMENT 'FLAT, HURDLE, CHASE, N_H_FLAT; NULL abroad',
+          run_type            STRING  COMMENT 'FLAT, HURDLE, CHASE, N_H_FLAT; often NULL abroad',
           distance            STRING,
           distance_yards      INT,
           going               STRING,
@@ -207,6 +208,146 @@ TABLES: dict[str, str] = {
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
+  # Model inputs for every UK/IRE runner at every snapshot, built only from
+  # races before the race day (see build/runner_features.py). Feature
+  # columns are never NULL: gaps get a neutral value and a flag.
+  "runner_features": """
+      CREATE TABLE IF NOT EXISTS {db}.runner_features (
+          ride_id             BIGINT,
+          snapshot            STRING  COMMENT 't-N, today or past; past rows are the training data',
+          snapshot_rank       INT,
+          race_id             BIGINT,
+          race_date           DATE,
+          horse_id            BIGINT,
+          jockey_id           BIGINT  COMMENT 'NULL until booked (t-3/t-2)',
+          trainer_id          BIGINT,
+          race_type           STRING,
+          has_handicap        BOOLEAN COMMENT 'Weights set to even out ratings; FALSE if unknown',
+          distance_band       STRING  COMMENT 'e.g. 9-11f',
+          going_group         STRING  COMMENT 'FIRM, GOOD, GOOD_TO_SOFT, SOFT, HEAVY, STANDARD; NULL if unknown',
+          field_size          INT     COMMENT 'Runners at this snapshot',
+          official_rating     INT,
+          rating_diff         DOUBLE  COMMENT 'Rating minus the field average; 0 if unrated',
+          is_unrated          BOOLEAN,
+          rating_change       INT     COMMENT 'Rating minus the rating at the last known run of the same race type; 0 if unknown',
+          weight_lbs          INT,
+          weight_diff         DOUBLE  COMMENT 'Weight minus the field average; 0 if unknown',
+          horse_runs          INT     COMMENT 'Known runs before the race (horse_form)',
+          horse_wins          INT,
+          horse_places        INT     COMMENT 'Top-3 finishes',
+          horse_win_rate      DOUBLE  COMMENT 'Shrunk towards 10%',
+          is_debut            BOOLEAN COMMENT 'No known runs',
+          days_since_run      INT     COMMENT '0 on debut',
+          last_form           DOUBLE  COMMENT 'Last run: 0 = won, 1 = last or did not finish; 0.5 if none',
+          recent_form         DOUBLE  COMMENT 'Average form score over the last 3 runs; 0.5 if none',
+          type_runs           INT     COMMENT 'Known runs of the same race type (flat, hurdle, chase, NH flat)',
+          type_wins           INT,
+          course_runs         INT,
+          course_wins         INT,
+          distance_runs       INT     COMMENT 'In the same distance band',
+          distance_wins       INT,
+          going_runs          INT     COMMENT 'In the same going group',
+          going_wins          INT,
+          has_jockey          BOOLEAN,
+          jockey_rides        INT     COMMENT 'Rides in complete UK/IRE races before the race day',
+          jockey_win_rate     DOUBLE  COMMENT 'Shrunk towards 10%; 10% when no jockey yet',
+          trainer_runs        INT,
+          trainer_win_rate    DOUBLE  COMMENT 'Shrunk towards 10%',
+          finish_position     INT     COMMENT 'The label: past snapshot only, NULL before'
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
+  # Our own fair win odds for every runner_features row, from the model
+  # JSON the training job publishes (see build/model_odds.py). Each race is
+  # priced by the newest model trained only on earlier races.
+  "model_odds": """
+      CREATE TABLE IF NOT EXISTS {db}.model_odds (
+          ride_id             BIGINT,
+          snapshot            STRING  COMMENT 't-N, today or past',
+          snapshot_rank       INT,
+          race_id             BIGINT,
+          race_date           DATE,
+          horse_id            BIGINT,
+          model_version       STRING  COMMENT 'Which weights priced this row, e.g. 2026-11-13',
+          in_sample           BOOLEAN COMMENT 'The model was trained on this race; leave out of the scorecard',
+          score               DOUBLE  COMMENT 'Weighted sum of the standardised inputs, before the softmax',
+          model_prob          DOUBLE  COMMENT 'Win probability; sums to 1 per race and snapshot',
+          model_odds_decimal  DOUBLE  COMMENT '1 / model_prob (stake included)',
+          model_odds          STRING  COMMENT 'Nearest standard bookmaker price, e.g. 10/3, Evens',
+          model_rank          INT     COMMENT '1 = our favourite in the race at this snapshot',
+          field_size          INT     COMMENT 'Runners the probability is shared across'
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
+  # Our probability next to the market's (SP for past rows, the forecast price
+  # for t-1/today), margin removed with Shin's method, and the undervalued flag
+  # (see build/model_value.py). Only races fully priced at that snapshot.
+  "model_value": """
+      CREATE TABLE IF NOT EXISTS {db}.model_value (
+          ride_id             BIGINT,
+          snapshot            STRING  COMMENT 't-N, today or past',
+          snapshot_rank       INT,
+          race_id             BIGINT,
+          race_date           DATE,
+          horse_id            BIGINT,
+          model_version       STRING,
+          in_sample           BOOLEAN COMMENT 'The model was trained on this race; leave out of the scorecard',
+          model_prob          DOUBLE,
+          model_odds          STRING,
+          market              STRING  COMMENT 'SP (past) or forecast (t-1, today)',
+          market_odds         STRING  COMMENT 'As quoted, e.g. 9/2',
+          market_odds_decimal DOUBLE,
+          market_prob         DOUBLE  COMMENT 'Margin removed (Shin); sums to 1 per race and snapshot',
+          book_percentage     DOUBLE  COMMENT 'Sum of 1/odds x 100 before the margin came off, e.g. 118',
+          edge                DOUBLE  COMMENT 'model_prob / market_prob - 1',
+          expected_value      DOUBLE  COMMENT 'Average return of a 1 unit bet at market_odds if model_prob is right',
+          undervalued         BOOLEAN COMMENT 'expected_value >= 10% and model_prob >= 5%',
+          won                 BOOLEAN COMMENT 'Once the race is run; NULL before, and for runners that did not run',
+          finish_position     INT
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
+  # How good our odds and undervalued picks have been, out of sample (see
+  # build/model_scorecard.py). One row per view (after_race = vs SP on the
+  # final field, site_pick = the race-morning flag), period and race group.
+  "model_scorecard": """
+      CREATE TABLE IF NOT EXISTS {db}.model_scorecard (
+          view                  STRING  COMMENT 'after_race (vs SP) or site_pick (race-morning row, else t-1)',
+          period_type           STRING  COMMENT 'all, month or model_version',
+          period                STRING  COMMENT 'all, 2026-11, or a model version',
+          race_group            STRING  COMMENT 'all, flat or jumps',
+          first_race            DATE,
+          last_race             DATE,
+          races                 BIGINT,
+          runners               BIGINT,
+          log_loss_model        DOUBLE  COMMENT 'Average -ln(our probability for the winner); lower is better',
+          log_loss_market       DOUBLE  COMMENT 'The same for the market (SP, or the forecast for site_pick)',
+          top_pick_won_model    DOUBLE  COMMENT 'Share of races our favourite won',
+          top_pick_won_market   DOUBLE  COMMENT 'Share of races the market favourite won',
+          bets                  BIGINT  COMMENT 'Undervalued runners that ran (non-runners are void)',
+          bets_won              BIGINT,
+          expected_wins_market  DOUBLE  COMMENT 'Wins SP expected from those bets (sum of SP probabilities)',
+          expected_wins_model   DOUBLE  COMMENT 'Wins we expected (sum of our probabilities)',
+          wins_z                DOUBLE  COMMENT '(bets_won - expected_wins_market) / its standard deviation; above ~2 is unlikely to be luck',
+          profit_units          DOUBLE  COMMENT '1 unit on every bet, settled at SP',
+          roi                   DOUBLE  COMMENT 'profit_units / bets',
+          roi_low               DOUBLE  COMMENT '95% range on roi (normal approximation)',
+          roi_high              DOUBLE
+      ) USING iceberg
+  """,
+  # Calibration, all time: runners grouped by the probability we (or the
+  # market) gave them, and how often they actually won.
+  "model_calibration": """
+      CREATE TABLE IF NOT EXISTS {db}.model_calibration (
+          view          STRING  COMMENT 'after_race or site_pick',
+          source        STRING  COMMENT 'model (ours) or market (SP, or the forecast for site_pick)',
+          band          INT     COMMENT '1 = 0%-5%, 2 = 5%-10%... (sort order)',
+          band_label    STRING,
+          runners       BIGINT,
+          predicted     DOUBLE  COMMENT 'Average probability given',
+          actual        DOUBLE  COMMENT 'Share that won'
+      ) USING iceberg
+  """,
 }
 
 
@@ -223,6 +364,11 @@ TABLE_KEYS: dict[str, list[str]] = {
   "horse_form": ["horse_id", "race_id"],
   "odds_snapshots": ["ride_id", "snapshot"],
   "odds_history": ["ride_id", "seq"],
+  "runner_features": ["ride_id", "snapshot"],
+  "model_odds": ["ride_id", "snapshot"],
+  "model_value": ["ride_id", "snapshot"],
+  "model_scorecard": ["view", "period_type", "period", "race_group"],
+  "model_calibration": ["view", "source", "band"],
 }
 
 
