@@ -1,6 +1,10 @@
 """Build the clean tables locally from a folder of raw JSON, no AWS needed.
 
-  python scripts/run_local.py <raw dir containing past/, today/, future/> [out dir]
+  python scripts/run_local.py <raw dir containing past/, today/, future/> [out dir] [--model model.json ...]
+
+--model adds model_odds, priced with that weights JSON (repeat it for several
+models, e.g. files copied from s3://data-jockey-clean-<account>/model/promoted/
+or a training dry run in model/local-runs/). Without it model_odds is skipped.
 
 Download the raw data first, e.g.:
 
@@ -11,6 +15,8 @@ the out dir (Iceberg isn't needed locally) and prints row counts plus a few
 sanity checks, so changes can be tried on real data before deploying.
 """
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -21,10 +27,18 @@ from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql.functions import col  # noqa: E402
 
 from data_jockey import build, raw_schemas  # noqa: E402
+from data_jockey.models import usable_models  # noqa: E402
 from data_jockey.tables import TABLE_KEYS, local_ddl  # noqa: E402
 
 
-def main(raw_dir: str, out_dir: str) -> None:
+def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
+  models = None
+  if model_files:
+    models = usable_models({path: json.loads(Path(path).read_text()) for path in model_files})
+    print(f"Pricing model_odds with {[model['version'] for model in models]}")
+  else:
+    print("No --model given: skipping model_odds")
+
   out = Path(out_dir).resolve()
   spark = (
     SparkSession.builder.master("local[*]")
@@ -44,7 +58,7 @@ def main(raw_dir: str, out_dir: str) -> None:
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files).cache()
 
   spark.sql("CREATE DATABASE IF NOT EXISTS local_schema")
-  for name, df in build.build_all(cards, races).items():
+  for name, df in build.build_all(cards, races, models).items():
     spark.sql(local_ddl(name, "local_schema"))
     clean = build.conform(df, spark.table(f"local_schema.{name}").schema)
     clean.write.mode("overwrite").parquet(str(out / name))
@@ -73,6 +87,9 @@ def main(raw_dir: str, out_dir: str) -> None:
 
 
 if __name__ == "__main__":
-  if len(sys.argv) < 2:
-    sys.exit(__doc__)
-  main(sys.argv[1], sys.argv[2] if len(sys.argv) > 2 else "local-tables")
+  parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+  parser.add_argument("raw_dir")
+  parser.add_argument("out_dir", nargs="?", default="local-tables")
+  parser.add_argument("--model", action="append", default=[], help="weights JSON; repeatable")
+  args = parser.parse_args()
+  main(args.raw_dir, args.out_dir, args.model)

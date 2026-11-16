@@ -11,4 +11,5 @@ UNION ALL SELECT 'horse_form', COUNT(*) FROM data_jockey.horse_form
 UNION ALL SELECT 'odds_snapshots', COUNT(*) FROM data_jockey.odds_snapshots
 UNION ALL SELECT 'odds_history', COUNT(*) FROM data_jockey.odds_history
 UNION ALL SELECT 'runner_features', COUNT(*) FROM data_jockey.runner_features
+UNION ALL SELECT 'model_odds', COUNT(*) FROM data_jockey.model_odds
 ORDER BY table_name;

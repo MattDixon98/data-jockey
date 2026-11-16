@@ -257,6 +257,28 @@ TABLES: dict[str, str] = {
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,
+  # Our own fair win odds for every runner_features row, from the model
+  # JSON the training job publishes (see build/model_odds.py). Each race is
+  # priced by the newest model trained only on earlier races.
+  "model_odds": """
+      CREATE TABLE IF NOT EXISTS {db}.model_odds (
+          ride_id             BIGINT,
+          snapshot            STRING  COMMENT 't-N, today or past',
+          snapshot_rank       INT,
+          race_id             BIGINT,
+          race_date           DATE,
+          horse_id            BIGINT,
+          model_version       STRING  COMMENT 'Which weights priced this row, e.g. 2026-11-13',
+          in_sample           BOOLEAN COMMENT 'The model was trained on this race; leave out of the scorecard',
+          score               DOUBLE  COMMENT 'Weighted sum of the standardised inputs, before the softmax',
+          model_prob          DOUBLE  COMMENT 'Win probability; sums to 1 per race and snapshot',
+          model_odds_decimal  DOUBLE  COMMENT '1 / model_prob (stake included)',
+          model_odds          STRING  COMMENT 'Nearest standard bookmaker price, e.g. 10/3, Evens',
+          model_rank          INT     COMMENT '1 = our favourite in the race at this snapshot',
+          field_size          INT     COMMENT 'Runners the probability is shared across'
+      ) USING iceberg
+      PARTITIONED BY (months(race_date))
+  """,
 }
 
 
@@ -274,6 +296,7 @@ TABLE_KEYS: dict[str, list[str]] = {
   "odds_snapshots": ["ride_id", "snapshot"],
   "odds_history": ["ride_id", "seq"],
   "runner_features": ["ride_id", "snapshot"],
+  "model_odds": ["ride_id", "snapshot"],
 }
 
 

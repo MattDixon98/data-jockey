@@ -13,11 +13,12 @@ import json
 import shutil
 
 import pytest
-from pyspark.sql.functions import col, count, to_date
+from pyspark.sql.functions import col, count, expr, to_date
 from pyspark.sql.functions import sum as spark_sum
 
 from conftest import FIXTURES
 from data_jockey import build, conversions, raw_schemas
+from data_jockey.build.model_odds import model_odds
 from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl
 
 RACE_FILES = sorted(FIXTURES.glob("past/races/date=2026-11-10/*.json"))
@@ -32,6 +33,10 @@ SNAPSHOT_CARD_FILES = sorted(
   path for date in SNAPSHOT_DATES for path in FIXTURES.glob(f"*/racecards/date={date}/*.json")
 )
 SETTLED_RACE, UPCOMING_RACE = 948004, 946551
+
+# The real first model (trained on races up to 2026-11-12), so its SQL inputs
+# are checked against Spark here as well as Athena in training.
+MODEL = json.loads((FIXTURES / "model" / "2026-11-13.json").read_text())
 
 
 def _raw_json(race_id):
@@ -53,7 +58,7 @@ def target_schemas(spark):
 def _build(spark, target_schemas, card_files, race_files):
   cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, card_files)
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files)
-  built = build.build_all(cards, races)
+  built = build.build_all(cards, races, [MODEL])
   return {
     name: build.conform(df, target_schemas[name]).cache() for name, df in built.items()
   }
@@ -503,3 +508,76 @@ def test_amended_result_is_used(snapshot_tables):
 
   (features,) = _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE, snapshot="past", horse_id=fratas)
   assert features["finish_position"] == 1
+
+
+# --- Model odds -------------------------------------------------------------
+
+
+def test_no_models_means_no_model_odds(spark):
+  # build_all only defines DataFrames (nothing runs), so this is cheap.
+  cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, CARD_FILES)
+  races = raw_schemas.read_raw(spark, raw_schemas.RACE, RACE_FILES)
+  built = build.build_all(cards, races)
+  assert "model_odds" not in built
+  assert "runner_features" in built
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_model_inputs_run_in_spark_and_are_never_null(request, fixture):
+  features = request.getfixturevalue(fixture)["runner_features"]
+  for item in MODEL["inputs"]:
+    value = expr(f"CAST({item['sql']} AS DOUBLE)")
+    assert features.where(value.isNull()).count() == 0, item["name"]
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_model_odds_price_every_runner_and_sum_to_one(request, fixture):
+  built = request.getfixturevalue(fixture)
+  odds = built["model_odds"]
+  assert odds.count() == built["runner_features"].count()
+  totals = odds.groupBy("race_id", "snapshot").agg(spark_sum("model_prob").alias("total")).collect()
+  assert totals and all(abs(row.total - 1.0) < 1e-9 for row in totals)
+  for row in odds.collect():
+    assert row.model_odds_decimal == pytest.approx(1 / row.model_prob)
+    assert row.model_odds is not None
+
+
+def test_model_odds_favourite_is_rank_one(snapshot_tables):
+  odds = snapshot_tables["model_odds"]
+  for race in odds.select("race_id", "snapshot").distinct().collect():
+    rows = odds.where((col("race_id") == race.race_id) & (col("snapshot") == race.snapshot)).collect()
+    favourite = max(rows, key=lambda r: r.model_prob)
+    assert favourite.model_rank == 1
+    assert {r.field_size for r in rows} == {len(rows)}
+
+
+def test_model_odds_reshare_as_the_field_shrinks(snapshot_tables):
+  """946551 loses entries between t-3 and t-1: the horses still in it share
+  100% at t-1 instead of whatever was left after the dropped ones."""
+  odds = snapshot_tables["model_odds"].where(col("race_id") == UPCOMING_RACE)
+  by_snapshot = {}
+  for row in odds.collect():
+    by_snapshot.setdefault(row.snapshot, {})[row.ride_id] = row.model_prob
+  stayed = set(by_snapshot["t-1"]) & set(by_snapshot["t-3"])
+  assert len(by_snapshot["t-3"]) > len(by_snapshot["t-1"])
+  assert sum(by_snapshot["t-3"][ride] for ride in stayed) < 1.0
+  assert sum(by_snapshot["t-1"][ride] for ride in stayed) == pytest.approx(1.0)
+
+
+def test_model_odds_flag_races_the_model_learnt_from(snapshot_tables):
+  # The fixture model was trained on races up to 2026-11-12.
+  odds = snapshot_tables["model_odds"]
+  flags = {(str(r.race_date), r.in_sample) for r in odds.select("race_date", "in_sample").distinct().collect()}
+  assert flags == {("2026-11-12", True), ("2026-11-14", False)}
+  assert {r.model_version for r in odds.select("model_version").distinct().collect()} == {"2026-11-13"}
+
+
+def test_each_race_priced_by_the_newest_model_trained_before_it(snapshot_tables):
+  older = {**MODEL, "version": "2026-11-10", "trained_on": {**MODEL["trained_on"], "to": "2026-11-09"}}
+  odds = model_odds(snapshot_tables["runner_features"], [older, MODEL])
+  used = {
+    (str(r.race_date), r.model_version, r.in_sample)
+    for r in odds.select("race_date", "model_version", "in_sample").distinct().collect()
+  }
+  # 12 Nov: the older model had finished training (9 Nov), the newer one hadn't.
+  assert used == {("2026-11-12", "2026-11-10", False), ("2026-11-14", "2026-11-13", False)}
