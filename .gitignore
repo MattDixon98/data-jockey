@@ -38,3 +38,6 @@ CLAUDE.md
 model/build/
 *.egg-info/
 model/local-runs/
+
+# Serving snapshot (default DATA_JOCKEY_SNAPSHOT location)
+backend/data/
