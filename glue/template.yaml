@@ -106,6 +106,8 @@ Resources:
         --database: !Ref Database
         # Promoted win-odds models from the data-jockey-model stack, used for model_odds.
         --model_location: !Sub s3://${WarehouseBucket}/model/
+        # The website's SQLite snapshot, written at the end of every run (data_jockey/serving.py).
+        --snapshot_location: !Sub s3://${WarehouseBucket}/serving/data_jockey.sqlite3
 
   # Daily rebuild after the morning crawls (06:00-06:20: yesterday's results to
   # past/, today and t-1..t-3 to today/ and future/). Role name is generated
@@ -158,3 +160,6 @@ Outputs:
   JobName:
     Description: Glue job name (use with `aws glue start-job-run`)
     Value: !Ref CleanTablesJob
+  SnapshotLocation:
+    Description: The website's SQLite snapshot, rewritten by every job run
+    Value: !Sub s3://${WarehouseBucket}/serving/data_jockey.sqlite3

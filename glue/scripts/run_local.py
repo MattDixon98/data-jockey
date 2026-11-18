@@ -12,12 +12,16 @@ Download the raw data first, e.g.:
 
 Runs the same build code as the Glue job, then writes each table as Parquet to
 the out dir (Iceberg isn't needed locally) and prints row counts plus a few
-sanity checks, so changes can be tried on real data before deploying.
+sanity checks, so changes can be tried on real data before deploying. It also
+writes the website's SQLite snapshot to <out dir>/data_jockey.sqlite3, as the
+job does (model tables empty without --model); point the backend's
+DATA_JOCKEY_SNAPSHOT at it to run the site on local data.
 """
 
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 GLUE_ROOT = Path(__file__).resolve().parent.parent
@@ -26,9 +30,9 @@ sys.path.insert(0, str(GLUE_ROOT))
 from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql.functions import col  # noqa: E402
 
-from data_jockey import build, raw_schemas  # noqa: E402
+from data_jockey import build, raw_schemas, serving  # noqa: E402
 from data_jockey.models import usable_models  # noqa: E402
-from data_jockey.tables import TABLE_KEYS, local_ddl  # noqa: E402
+from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl  # noqa: E402
 
 
 def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
@@ -58,12 +62,18 @@ def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files).cache()
 
   spark.sql("CREATE DATABASE IF NOT EXISTS local_schema")
-  for name, df in build.build_all(cards, races, models).items():
+  for name in TABLES:
     spark.sql(local_ddl(name, "local_schema"))
+
+  # Every table as written; tables not built (model ones without --model) stay
+  # empty, like the local_schema table of the same name.
+  written_tables = {name: spark.table(f"local_schema.{name}") for name in TABLES}
+  for name, df in build.build_all(cards, races, models).items():
     clean = build.conform(df, spark.table(f"local_schema.{name}").schema)
     clean.write.mode("overwrite").parquet(str(out / name))
 
     written = spark.read.parquet(str(out / name))
+    written_tables[name] = written
     rows = written.count()
     distinct_keys = written.select(*TABLE_KEYS[name]).distinct().count()
 
@@ -82,6 +92,13 @@ def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
     if null_cols:
       line += f"  all-null: {null_cols}"
     print(line)
+
+  snapshot = out / "data_jockey.sqlite3"
+  built_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+  counts = serving.write_sqlite(serving.uk_ire_tables(written_tables), str(snapshot), built_at)
+  print(f"\nSQLite snapshot (UK/IRE only): {snapshot}, {snapshot.stat().st_size / 1e6:.1f} MB")
+  for name, rows in counts.items():
+    print(f"  {name:17} {rows:>9,} rows")
 
   spark.stop()
 

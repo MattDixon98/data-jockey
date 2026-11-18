@@ -13,11 +13,19 @@ publishes under --model_location (promoted/*.json and current.json). If they
 can't be loaded, every other table is still rebuilt, model_odds keeps its
 previous rows, and the job fails at the end saying why.
 
+Last, it writes the serving snapshot: the UK/IRE rows of the tables the website
+uses, read back from Iceberg as committed, as one SQLite file
+(data_jockey.serving), uploaded to --snapshot_location for the web server to
+pick up. It's written even when model_odds failed, so results and racecards
+still reach the site.
+
 Needs the data_jockey package on the path (--extra-py-files on Glue).
 """
 
 import json
 import sys
+import tempfile
+from datetime import datetime, timezone
 
 import boto3
 from botocore.exceptions import ClientError
@@ -28,13 +36,23 @@ from pyspark.conf import SparkConf
 from pyspark.context import SparkContext
 from pyspark.sql.functions import lit
 
-from data_jockey import build, raw_schemas
+from data_jockey import build, raw_schemas, serving
 from data_jockey.models import ModelError, usable_models
 from data_jockey.tables import TABLES, ddl_columns
 
 CATALOG = "glue_catalog"
 
-args = getResolvedOptions(sys.argv, ["JOB_NAME", "raw_bucket", "warehouse", "database", "model_location"])
+args = getResolvedOptions(
+  sys.argv,
+  [
+    "JOB_NAME",
+    "raw_bucket",
+    "warehouse",
+    "database",
+    "model_location",
+    "snapshot_location"
+  ],
+)
 
 def read_models(location: str) -> list[dict]:
   """Every promoted model under `location` (s3://bucket/model/): promoted/*.json plus current.json, checked and ordered."""
@@ -114,6 +132,29 @@ for name, df in build.build_all(racecards, races, models).items():
   # the table's history for time travel / rollback).
   clean.writeTo(table).overwrite(lit(True))
   print(f"{table}: {spark.table(table).count()} rows")
+
+# The serving snapshot, from the tables as committed (so a model_odds that
+# kept its previous rows is exported as it stands).
+committed_tables = {}
+for name in TABLES:
+  committed_tables[name] = spark.table(f"{db}.{name}")
+served = serving.uk_ire_tables(committed_tables)
+
+built_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+# s3://bucket/serving/data_jockey.sqlite3 -> "bucket", "serving/data_jockey.sqlite3"
+snapshot_location = args["snapshot_location"]
+without_scheme = snapshot_location.removeprefix("s3://")
+snapshot_bucket, snapshot_key = without_scheme.split("/", 1)
+
+with tempfile.TemporaryDirectory() as scratch:
+  local_snapshot = f"{scratch}/data_jockey.sqlite3"
+  counts = serving.write_sqlite(served, local_snapshot, built_at)
+  for name, rows in counts.items():
+    print(f"snapshot {name}: {rows} rows")
+  # One PUT: readers see the old file or the new one, never half of it.
+  boto3.client("s3").upload_file(local_snapshot, snapshot_bucket, snapshot_key)
+print(f"Snapshot built {built_at} uploaded to {args['snapshot_location']}")
 
 job.commit()
 
