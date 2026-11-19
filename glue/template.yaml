@@ -85,7 +85,7 @@ Resources:
       GlueVersion: "5.0"
       WorkerType: G.1X
       NumberOfWorkers: 2
-      Timeout: 30
+      Timeout: 60
       MaxRetries: 0
       Command:
         Name: glueetl
