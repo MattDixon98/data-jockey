@@ -108,6 +108,9 @@ Resources:
         --model_location: !Sub s3://${WarehouseBucket}/model/
         # The website's SQLite snapshot, written at the end of every run (data_jockey/serving.py).
         --snapshot_location: !Sub s3://${WarehouseBucket}/serving/data_jockey.sqlite3
+        # "true" empties raw_files and stages every raw file again (data_jockey/staging.py);
+        # override for one run with start-job-run --arguments '{"--restage_raw":"true"}'.
+        --restage_raw: "false"
 
   # Daily rebuild after the morning crawls (06:00-06:20: yesterday's results to
   # past/, today and t-1..t-3 to today/ and future/). Role name is generated
