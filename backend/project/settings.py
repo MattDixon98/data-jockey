@@ -40,7 +40,7 @@ INSTALLED_APPS = [
   "strawberry_django",
   "app",
   "racing",
-  "graphql_api",
+  "api",
 ]
 
 MIDDLEWARE = [
@@ -104,11 +104,16 @@ DATABASE_ROUTERS = ["racing.routers.SnapshotRouter"]
 
 AUTH_PASSWORD_VALIDATORS = []
 
-# The GraphQL API (graphql_api/): every paginated list is capped, so no query
-# can pull a whole table.
+# The API (api/): every paginated list is capped, so no request can pull a
+# whole table.
+API_PAGE_SIZE = 50
+API_MAX_PAGE_SIZE = 200
+
 STRAWBERRY_DJANGO = {
-  "PAGINATION_DEFAULT_LIMIT": 50,
-  "PAGINATION_MAX_LIMIT": 200,
+  "PAGINATION_DEFAULT_LIMIT": API_PAGE_SIZE,
+  "PAGINATION_MAX_LIMIT": API_MAX_PAGE_SIZE,
+  # Column descriptions are the racing models' help_text.
+  "FIELD_DESCRIPTION_FROM_HELP_TEXT": True,
 }
 
 LANGUAGE_CODE = "en-us"

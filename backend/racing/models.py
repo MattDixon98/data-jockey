@@ -6,6 +6,10 @@ glue/data_jockey/tables.py. Foreign keys have no database constraints
 snapshot. Rows that can refer to entries dropped before race day (odds
 snapshots, model rows at t-3/t-2) keep plain ride_id/horse_id columns instead,
 because those rides and horses aren't in runners/horses.
+
+help_text is what the API shows as each field's description (via
+STRAWBERRY_DJANGO's FIELD_DESCRIPTION_FROM_HELP_TEXT), so a column is
+described once, here.
 """
 
 from django.db import models
@@ -67,7 +71,7 @@ class Race(SnapshotModel):
   course = _fk(Course, "course_id", "races", null=True)
   country_code = models.TextField(null=True)
   race_date = models.DateField(null=True)
-  race_time = models.TextField(null=True)
+  race_time = models.TextField(null=True, help_text="Scheduled time, UK local (HH:MM).")
   off_time = models.TextField(null=True)
   name = models.TextField(null=True)
   race_class = models.IntegerField(null=True)
@@ -79,7 +83,7 @@ class Race(SnapshotModel):
   going_shortcode = models.TextField(null=True)
   has_handicap = models.BooleanField(null=True)
   race_stage = models.TextField(null=True)
-  result_status = models.TextField(null=True)
+  result_status = models.TextField(null=True, help_text="Only complete races have trustworthy positions.")
   ride_count = models.IntegerField(null=True)
   placed_count = models.IntegerField(null=True)
   winning_time = models.TextField(null=True)
@@ -87,8 +91,8 @@ class Race(SnapshotModel):
   book_percentage = models.FloatField(null=True)
   betting_forecast = models.TextField(null=True)
   verdict = models.TextField(null=True)
-  snapshot = models.TextField(null=True)
-  race_type = models.TextField(null=True)
+  snapshot = models.TextField(null=True, help_text="Which crawl the race's details come from: its latest.")
+  race_type = models.TextField(null=True, help_text="FLAT, HURDLE, CHASE or N_H_FLAT.")
 
   class Meta(SnapshotModel.Meta):
     db_table = "races"
@@ -133,13 +137,16 @@ class Runner(SnapshotModel):
   cloth_number = models.IntegerField(null=True)
   draw = models.IntegerField(null=True)
   status = models.TextField(null=True)
-  finish_position = models.IntegerField(null=True)
+  finish_position = models.IntegerField(
+    null=True,
+    help_text="Only set once the race is in past (amended result if there was one).",
+  )
   non_finisher_reason = models.TextField(null=True)
   horse_age = models.IntegerField(null=True)
   weight = models.TextField(null=True)
   weight_lbs = models.IntegerField(null=True)
   official_rating = models.IntegerField(null=True)
-  odds = models.TextField(null=True)
+  odds = models.TextField(null=True, help_text="The latest price: forecast before the race, SP after it.")
   odds_decimal = models.FloatField(null=True)
   favourite = models.TextField(null=True)
   headgear = models.TextField(null=True)
@@ -148,7 +155,7 @@ class Runner(SnapshotModel):
   lifetime_wins = models.IntegerField(null=True)
   lifetime_places = models.IntegerField(null=True)
   insights = models.JSONField(null=True)
-  snapshot = models.TextField(null=True)
+  snapshot = models.TextField(null=True, help_text="Which crawl the ride's details come from: its race's latest.")
 
   class Meta(SnapshotModel.Meta):
     db_table = "runners"
@@ -169,7 +176,7 @@ class HorseForm(SnapshotModel):
   """A horse's previous runs. race_id is plain: many of these races were never crawled."""
   pk = models.CompositePrimaryKey("horse_id", "race_id")
   horse = _fk(Horse, "horse_id", "form")
-  race_id = models.BigIntegerField()
+  race_id = models.BigIntegerField(help_text="The source's race id; many of these races were never crawled.")
   race_date = models.DateField(null=True)
   race_time = models.TextField(null=True)
   course_name = models.TextField(null=True)
@@ -219,7 +226,7 @@ class OddsHistory(SnapshotModel):
   race = _fk(Race, "race_id", "odds_history")
   race_date = models.DateField(null=True)
   horse_id = models.BigIntegerField(null=True)
-  seq = models.IntegerField()
+  seq = models.IntegerField(help_text="1 = the opening show.")
   odds = models.TextField(null=True)
   odds_decimal = models.FloatField(null=True)
 
@@ -237,12 +244,12 @@ class ModelOdds(SnapshotModel):
   race_date = models.DateField(null=True)
   horse_id = models.BigIntegerField(null=True)
   model_version = models.TextField(null=True)
-  in_sample = models.BooleanField(null=True)
+  in_sample = models.BooleanField(null=True, help_text="The model was trained on this race, so it isn't a fair test.")
   score = models.FloatField(null=True)
   model_prob = models.FloatField(null=True)
   model_odds_decimal = models.FloatField(null=True)
   model_odds = models.TextField(null=True)
-  model_rank = models.IntegerField(null=True)
+  model_rank = models.IntegerField(null=True, help_text="1 = our favourite.")
   field_size = models.IntegerField(null=True)
 
   class Meta(SnapshotModel.Meta):
@@ -260,16 +267,19 @@ class ModelValue(SnapshotModel):
   race_date = models.DateField(null=True)
   horse_id = models.BigIntegerField(null=True)
   model_version = models.TextField(null=True)
-  in_sample = models.BooleanField(null=True)
+  in_sample = models.BooleanField(null=True, help_text="The model was trained on this race, so it isn't a fair test.")
   model_prob = models.FloatField(null=True)
   model_odds = models.TextField(null=True)
-  market = models.TextField(null=True)
+  market = models.TextField(null=True, help_text="sp for past rows, forecast before the race.")
   market_odds = models.TextField(null=True)
   market_odds_decimal = models.FloatField(null=True)
   market_prob = models.FloatField(null=True)
   book_percentage = models.FloatField(null=True)
-  edge = models.FloatField(null=True)
-  expected_value = models.FloatField(null=True)
+  edge = models.FloatField(null=True, help_text="model_prob / market_prob - 1.")
+  expected_value = models.FloatField(
+    null=True,
+    help_text="Return per unit staked at the market price if our probability is right.",
+  )
   undervalued = models.BooleanField(null=True)
   won = models.BooleanField(null=True)
   finish_position = models.IntegerField(null=True)
@@ -280,10 +290,10 @@ class ModelValue(SnapshotModel):
 
 class ModelScorecard(SnapshotModel):
   pk = models.CompositePrimaryKey("view", "period_type", "period", "race_group")
-  view = models.TextField()
-  period_type = models.TextField()
+  view = models.TextField(help_text="after_race (vs SP) or site_pick (the race-morning flags).")
+  period_type = models.TextField(help_text="all, month or model_version.")
   period = models.TextField()
-  race_group = models.TextField()
+  race_group = models.TextField(help_text="all, flat or jumps.")
   first_race = models.DateField(null=True)
   last_race = models.DateField(null=True)
   races = models.BigIntegerField(null=True)
@@ -308,8 +318,8 @@ class ModelScorecard(SnapshotModel):
 
 class ModelCalibration(SnapshotModel):
   pk = models.CompositePrimaryKey("view", "source", "band")
-  view = models.TextField()
-  source = models.TextField()
+  view = models.TextField(help_text="after_race (vs SP) or site_pick (the race-morning flags).")
+  source = models.TextField(help_text="model or market.")
   band = models.IntegerField()
   band_label = models.TextField(null=True)
   runners = models.BigIntegerField(null=True)

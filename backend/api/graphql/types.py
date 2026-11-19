@@ -1,5 +1,7 @@
 """GraphQL types, one per racing model.
 
+Field descriptions come from the models' help_text, so only fields that
+aren't model columns describe themselves here.
 Ids are plain Ints (the source's ids, all well inside GraphQL's 32-bit Int).
 Lists that can grow without bound (a jockey's rides, a course's races) aren't
 fields here: they're paginated top-level queries with filters (schema.py).
@@ -9,7 +11,6 @@ applies to prefetched lists (a race's runners come in cloth-number order).
 
 from __future__ import annotations
 
-from enum import Enum
 from typing import Annotated
 
 import strawberry
@@ -17,16 +18,11 @@ import strawberry_django
 from strawberry import auto
 from strawberry.scalars import JSON
 
+from api import queries
 from racing import models
 
 
-@strawberry.enum(description="Which crawl a row comes from: t-3..t-1 days before the race, the race-morning crawl, or the result.")
-class Snapshot(Enum):
-  T_3 = "t-3"
-  T_2 = "t-2"
-  T_1 = "t-1"
-  TODAY = "today"
-  PAST = "past"
+Snapshot = strawberry.enum(queries.Snapshot, description=queries.Snapshot.__doc__)
 
 
 @strawberry_django.type(models.SnapshotInfo, description="When the data being served was built.")
@@ -89,12 +85,12 @@ class Prize:
 
   @classmethod
   def get_queryset(cls, queryset, info, **kwargs):
-    return queryset.order_by("position")
+    return queryset.order_by(*queries.PRIZE_ORDER)
 
 
 @strawberry_django.type(models.HorseForm, name="HorseFormRun")
 class HorseFormRun:
-  race_id: int = strawberry_django.field(description="The source's race id; many of these races were never crawled.")
+  race_id: int
   race_date: auto
   race_time: auto
   course_name: auto
@@ -117,7 +113,7 @@ class HorseFormRun:
 
   @classmethod
   def get_queryset(cls, queryset, info, **kwargs):
-    return queryset.order_by("-race_date", "-race_time")
+    return queryset.order_by(*queries.FORM_ORDER)
 
 
 @strawberry_django.type(models.OddsSnapshot, description="The market price at one crawl (forecast before the race, SP in past).")
@@ -137,18 +133,18 @@ class OddsMove:
 
   @classmethod
   def get_queryset(cls, queryset, info, **kwargs):
-    return queryset.order_by("seq")
+    return queryset.order_by(*queries.ODDS_MOVE_ORDER)
 
 
 @strawberry_django.type(models.ModelOdds, description="Our fair win odds (a 100% book) for a runner at one snapshot.")
 class ModelOdds:
   snapshot: Snapshot | None
   model_version: auto
-  in_sample: bool | None = strawberry_django.field(description="The model was trained on this race, so it isn't a fair test.")
+  in_sample: auto
   model_prob: auto
   model_odds_decimal: auto
   model_odds: auto
-  model_rank: int | None = strawberry_django.field(description="1 = our favourite.")
+  model_rank: auto
   field_size: auto
 
 
@@ -159,31 +155,23 @@ class ModelValue:
   in_sample: auto
   model_prob: auto
   model_odds: auto
-  market: str | None = strawberry_django.field(description="sp for past rows, forecast before the race.")
+  market: auto
   market_odds: auto
   market_odds_decimal: auto
   market_prob: auto
   book_percentage: auto
-  edge: float | None = strawberry_django.field(description="model_prob / market_prob - 1.")
-  expected_value: float | None = strawberry_django.field(description="Return per unit staked at the market price if our probability is right.")
+  edge: auto
+  expected_value: auto
   undervalued: auto
   won: auto
   finish_position: auto
 
 
 def _at_snapshot(rows, snapshot: Snapshot | None, own_snapshot: str | None):
-  """The row for one snapshot out of a prefetched per-snapshot list. Fields that
-  call this read runner.snapshot, so they ask the optimizer for it (only=...):
-  otherwise it's left out of the query and fetched once per runner."""
-  wanted = snapshot.value if snapshot else own_snapshot
-  for row in rows:
-    if row.snapshot == wanted:
-      return row
-  return None
-
-
-def _oldest_first(rows):
-  return sorted(rows, key=lambda row: -row.snapshot_rank)
+  """queries.at_snapshot for the enum. Fields that call this read
+  runner.snapshot, so they ask the optimizer for it (only=...): otherwise it's
+  left out of the query and fetched once per runner."""
+  return queries.at_snapshot(rows, snapshot.value if snapshot else None, own_snapshot)
 
 
 SnapshotArgument = Annotated[
@@ -204,13 +192,13 @@ class Runner:
   cloth_number: auto
   draw: auto
   status: auto
-  finish_position: int | None = strawberry_django.field(description="Only set once the race is in past (amended result if there was one).")
+  finish_position: auto
   non_finisher_reason: auto
   horse_age: auto
   weight: auto
   weight_lbs: auto
   official_rating: auto
-  odds: str | None = strawberry_django.field(description="The latest price: forecast before the race, SP after it.")
+  odds: auto
   odds_decimal: auto
   favourite: auto
   headgear: auto
@@ -224,11 +212,11 @@ class Runner:
 
   @classmethod
   def get_queryset(cls, queryset, info, **kwargs):
-    return queryset.order_by("-race_date", "cloth_number")
+    return queryset.order_by(*queries.RUNNER_ORDER)
 
   @strawberry_django.field(prefetch_related=["odds_snapshots"], description="The market price at each crawl, oldest first.")
   def odds_snapshots(self) -> list[OddsSnapshot]:
-    return _oldest_first(self.odds_snapshots.all())
+    return queries.oldest_first(self.odds_snapshots.all())
 
   @strawberry_django.field(only=["snapshot"], prefetch_related=["model_odds"], description="Our odds at one snapshot.")
   def model_odds(self, snapshot: SnapshotArgument = None) -> ModelOdds | None:
@@ -236,7 +224,7 @@ class Runner:
 
   @strawberry_django.field(prefetch_related=["model_odds"], description="Our odds at every snapshot, oldest first.")
   def model_odds_snapshots(self) -> list[ModelOdds]:
-    return _oldest_first(self.model_odds.all())
+    return queries.oldest_first(self.model_odds.all())
 
   @strawberry_django.field(only=["snapshot"], prefetch_related=["model_value"], description="Ours vs the market at one snapshot (none at t-2/t-3: no prices).")
   def model_value(self, snapshot: SnapshotArgument = None) -> ModelValue | None:
@@ -252,10 +240,10 @@ class Race:
   course: Course | None
   country_code: auto
   race_date: auto
-  race_time: str | None = strawberry_django.field(description="Scheduled time, UK local (HH:MM).")
+  race_time: auto
   off_time: auto
   name: auto
-  race_type: str | None = strawberry_django.field(description="FLAT, HURDLE, CHASE or N_H_FLAT.")
+  race_type: auto
   race_class: auto
   age_band: auto
   surface: auto
@@ -265,7 +253,7 @@ class Race:
   going_shortcode: auto
   has_handicap: auto
   race_stage: auto
-  result_status: str | None = strawberry_django.field(description="Only complete races have trustworthy positions.")
+  result_status: auto
   ride_count: auto
   placed_count: auto
   winning_time: auto
@@ -279,15 +267,15 @@ class Race:
 
   @classmethod
   def get_queryset(cls, queryset, info, **kwargs):
-    return queryset.order_by("race_date", "race_time", "race_id")
+    return queryset.order_by(*queries.RACE_ORDER)
 
 
 @strawberry_django.type(models.ModelScorecard, description="How our odds and undervalued picks have done, out of sample.")
 class ScorecardRow:
-  view: str = strawberry_django.field(description="after_race (vs SP) or site_pick (the race-morning flags).")
-  period_type: str = strawberry_django.field(description="all, month or model_version.")
+  view: auto
+  period_type: auto
   period: auto
-  race_group: str = strawberry_django.field(description="all, flat or jumps.")
+  race_group: auto
   first_race: auto
   last_race: auto
   races: auto
@@ -310,7 +298,7 @@ class ScorecardRow:
 @strawberry_django.type(models.ModelCalibration, description="Predicted vs actual win rate per probability band.")
 class CalibrationBand:
   view: auto
-  source: str = strawberry_django.field(description="model or market.")
+  source: auto
   band: auto
   band_label: auto
   runners: auto

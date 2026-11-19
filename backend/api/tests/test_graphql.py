@@ -5,12 +5,10 @@ from django.db import connections
 from django.test import Client
 from django.test.utils import CaptureQueriesContext
 
-from graphql_api.schema import MAX_DEPTH, schema
-from racing import models
+from api.graphql.schema import MAX_DEPTH, schema
 from racing.routers import SNAPSHOT_DB
 
-from .snapshot import RACE_DAY as RACE_DAY_DATE
-from .snapshot import DROPPED_RIDE, PAST_RACE, TODAY_RACE, SnapshotTestCase
+from .snapshot import DROPPED_RIDE, PAST_RACE, TODAY_RACE, SnapshotTestCase, add_runners
 
 RACE_DAY = '"2026-11-19"'
 
@@ -68,7 +66,7 @@ class RacecardTests(QueryTestCase):
   def test_query_count_does_not_grow_with_runners(self):
     with CaptureQueriesContext(connections[SNAPSHOT_DB]) as before:
       self.query(self.HOMEPAGE)
-    load_more_runners()
+    add_runners()
     with CaptureQueriesContext(connections[SNAPSHOT_DB]) as after:
       data = self.query(self.HOMEPAGE)
     self.assertEqual(len(data["meetings"][0]["races"][0]["runners"]), 13)
@@ -159,13 +157,3 @@ class HttpTests(SnapshotTestCase):
     response = self.client.get("/graphql/", HTTP_ACCEPT="text/html")
     self.assertEqual(response.status_code, 200)
     self.assertIn(b"graphiql", response.content.lower())
-
-
-def load_more_runners():
-  for index in range(10):
-    ride_id = 3100 + index
-    models.Horse.objects.create(horse_id=1100 + index, name=f"Extra {index}")
-    models.Runner.objects.create(
-      ride_id=ride_id, race_id=TODAY_RACE, race_date=RACE_DAY_DATE,
-      horse_id=1100 + index, jockey_id=50, cloth_number=10 + index, snapshot="today",
-    )

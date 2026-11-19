@@ -97,6 +97,16 @@ def load_snapshot():
   models.ModelCalibration.objects.create(view="after_race", source="model", band=0, band_label="0-5%")
 
 
+def add_runners(count=10):
+  """More runners in today's race, for checking query counts don't grow with them."""
+  for index in range(count):
+    models.Horse.objects.create(horse_id=1100 + index, name=f"Extra {index}")
+    models.Runner.objects.create(
+      ride_id=3100 + index, race_id=TODAY_RACE, race_date=RACE_DAY,
+      horse_id=1100 + index, jockey_id=50, cloth_number=10 + index, snapshot="today",
+    )
+
+
 class SnapshotTestCase(TestCase):
   databases = {"default", SNAPSHOT_DB}
 

@@ -15,12 +15,13 @@ from typing import Annotated
 import strawberry
 import strawberry_django
 from django.conf import settings
-from django.db.models import F
 from graphql import GraphQLError
 from strawberry.extensions import MaskErrors, MaxAliasesLimiter, MaxTokensLimiter, ParserCache, QueryDepthLimiter, ValidationCache
 from strawberry_django.optimizer import DjangoOptimizerExtension
 from strawberry_django.pagination import OffsetPaginated
 
+from api import queries
+from api.queries import ApiError
 from racing import models
 
 from .filters import RaceFilter, RunnerFilter
@@ -42,12 +43,6 @@ from .types import (
 MAX_DEPTH = 8
 MAX_ALIASES = 15
 MAX_TOKENS = 2000
-# Name searches shorter than this would match most of the table.
-MIN_SEARCH_LENGTH = 3
-
-
-class ApiError(Exception):
-  """A mistake in the request, with a message meant for the client (never masked)."""
 
 
 def _should_mask(error: GraphQLError) -> bool:
@@ -60,22 +55,15 @@ def _should_mask(error: GraphQLError) -> bool:
   return not isinstance(original, (GraphQLError, ApiError))
 
 
-def _name_search(model, name: str):
-  name = name.strip()
-  if len(name) < MIN_SEARCH_LENGTH:
-    raise ApiError(f"Search for at least {MIN_SEARCH_LENGTH} characters")
-  return model.objects.filter(name__icontains=name).order_by("name")
-
-
 @strawberry.type
 class Query:
   @strawberry_django.field(description="When the data being served was built.")
   def snapshot_info(self) -> SnapshotInfo | None:
-    return models.SnapshotInfo.objects.first()
+    return queries.snapshot_info()
 
   @strawberry_django.field(description="A day's racing, one meeting per course (by course name), races in time order.")
   def meetings(self, date: datetime.date) -> list[Meeting]:
-    return models.Meeting.objects.filter(meeting_date=date).order_by("course__name")
+    return queries.meetings_on(date)
 
   @strawberry_django.field(description="One race by its id.")
   def race(self, race_id: int) -> Race | None:
@@ -102,12 +90,7 @@ class Query:
       ),
     ] = None,
   ) -> list[Runner]:
-    wanted_snapshot = snapshot.value if snapshot else F("snapshot")
-    return models.Runner.objects.filter(
-      race_date=date,
-      model_value__snapshot=wanted_snapshot,
-      model_value__undervalued=True,
-    ).order_by("race__race_time", "cloth_number")
+    return queries.undervalued(date, snapshot.value if snapshot else None)
 
   @strawberry_django.field
   def course(self, course_id: int) -> Course | None:
@@ -115,7 +98,7 @@ class Query:
 
   @strawberry_django.field(description="Every UK/IRE course, by name.")
   def courses(self) -> list[Course]:
-    return models.Course.objects.order_by("name")
+    return queries.courses()
 
   @strawberry_django.field
   def horse(self, horse_id: int) -> Horse | None:
@@ -131,31 +114,23 @@ class Query:
 
   @strawberry_django.offset_paginated(OffsetPaginated[Horse], description="Horses whose name contains `name`.")
   def horses(self, name: str) -> list[Horse]:
-    return _name_search(models.Horse, name)
+    return queries.name_search(models.Horse, name)
 
   @strawberry_django.offset_paginated(OffsetPaginated[Jockey], description="Jockeys whose name contains `name`.")
   def jockeys(self, name: str) -> list[Jockey]:
-    return _name_search(models.Jockey, name)
+    return queries.name_search(models.Jockey, name)
 
   @strawberry_django.offset_paginated(OffsetPaginated[Trainer], description="Trainers whose name contains `name`.")
   def trainers(self, name: str) -> list[Trainer]:
-    return _name_search(models.Trainer, name)
+    return queries.name_search(models.Trainer, name)
 
   @strawberry_django.field(description="The track record: one row per view, period and race group.")
   def scorecard(self, view: str | None = None, period_type: str | None = None) -> list[ScorecardRow]:
-    rows = models.ModelScorecard.objects.order_by("view", "period_type", "period", "race_group")
-    if view:
-      rows = rows.filter(view=view)
-    if period_type:
-      rows = rows.filter(period_type=period_type)
-    return rows
+    return queries.scorecard(view, period_type)
 
   @strawberry_django.field(description="Calibration bands, ours and the market's.")
   def calibration(self, view: str | None = None) -> list[CalibrationBand]:
-    rows = models.ModelCalibration.objects.order_by("view", "source", "band")
-    if view:
-      rows = rows.filter(view=view)
-    return rows
+    return queries.calibration(view)
 
 
 def _extensions():
