@@ -37,8 +37,10 @@ INSTALLED_APPS = [
   "django.contrib.sessions",
   "django.contrib.messages",
   "django.contrib.staticfiles",
+  "strawberry_django",
   "app",
   "racing",
+  "graphql_api",
 ]
 
 MIDDLEWARE = [
@@ -101,6 +103,13 @@ DATABASES = {
 DATABASE_ROUTERS = ["racing.routers.SnapshotRouter"]
 
 AUTH_PASSWORD_VALIDATORS = []
+
+# The GraphQL API (graphql_api/): every paginated list is capped, so no query
+# can pull a whole table.
+STRAWBERRY_DJANGO = {
+  "PAGINATION_DEFAULT_LIMIT": 50,
+  "PAGINATION_MAX_LIMIT": 200,
+}
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
