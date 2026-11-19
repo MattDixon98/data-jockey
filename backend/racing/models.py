@@ -195,9 +195,9 @@ class HorseForm(SnapshotModel):
 
 
 class OddsSnapshot(SnapshotModel):
-  """A runner's price at each crawl that had one. Plain ride_id/horse_id: see the module docstring."""
+  """A runner's price at each crawl that had one. Reverse-only `ride`: see the module docstring."""
   pk = models.CompositePrimaryKey("ride_id", "snapshot")
-  ride_id = models.BigIntegerField()
+  ride = _fk(Runner, "ride_id", "odds_snapshots")
   race = _fk(Race, "race_id", "odds_snapshots")
   race_date = models.DateField(null=True)
   horse_id = models.BigIntegerField(null=True)
@@ -228,9 +228,9 @@ class OddsHistory(SnapshotModel):
 
 
 class ModelOdds(SnapshotModel):
-  """Our win odds per runner and snapshot. Plain ride_id/horse_id: see the module docstring."""
+  """Our win odds per runner and snapshot. Reverse-only `ride`: see the module docstring."""
   pk = models.CompositePrimaryKey("ride_id", "snapshot")
-  ride_id = models.BigIntegerField()
+  ride = _fk(Runner, "ride_id", "model_odds")
   snapshot = models.TextField()
   snapshot_rank = models.IntegerField(null=True)
   race = _fk(Race, "race_id", "model_odds")
@@ -251,9 +251,9 @@ class ModelOdds(SnapshotModel):
 
 
 class ModelValue(SnapshotModel):
-  """Our probability next to the market's, with the undervalued flag."""
+  """Our probability next to the market's, with the undervalued flag. Reverse-only `ride`."""
   pk = models.CompositePrimaryKey("ride_id", "snapshot")
-  ride_id = models.BigIntegerField()
+  ride = _fk(Runner, "ride_id", "model_value")
   snapshot = models.TextField()
   snapshot_rank = models.IntegerField(null=True)
   race = _fk(Race, "race_id", "model_value")
