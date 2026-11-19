@@ -15,6 +15,7 @@ server; locally e.g. AWS_PROFILE=data-jockey).
 """
 
 import os
+import shutil
 import uuid
 from pathlib import Path
 
@@ -67,7 +68,11 @@ class Command(BaseCommand):
     try:
       # IfMatch: if the object is replaced between the HEAD and here, fail
       # rather than save the new file under the old ETag; the next run gets it.
-      s3.download_file(bucket, key, str(temp_file), ExtraArgs={"IfMatch": etag})
+      # (get_object, not download_file: download_file doesn't accept IfMatch.)
+      response = s3.get_object(Bucket=bucket, Key=key, IfMatch=etag)
+      with open(temp_file, "wb") as out:
+        # Streamed to disk in chunks, not read into memory all at once.
+        shutil.copyfileobj(response["Body"], out)
       built_at = check_snapshot(temp_file, settings.SNAPSHOT_FORMAT_VERSION)
       # Readable by the web server whatever user it runs as.
       temp_file.chmod(0o644)
