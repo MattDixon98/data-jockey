@@ -38,3 +38,6 @@ CLAUDE.md
 model/build/
 *.egg-info/
 model/local-runs/
+
+# Serving snapshot downloaded by fetch_snapshot (and its .etag)
+backend/data/

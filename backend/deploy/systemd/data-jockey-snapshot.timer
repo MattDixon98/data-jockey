@@ -1,0 +1,14 @@
+# Checks for a new snapshot shortly after boot (so a fresh server has data)
+# and every 15 minutes after that. A check is one S3 HEAD request; the file
+# is only downloaded when its ETag changes, about once a day after the
+# 07:00 rebuild.
+[Unit]
+Description=Data Jockey: check for a new serving snapshot every 15 minutes
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=15min
+RandomizedDelaySec=60
+
+[Install]
+WantedBy=timers.target

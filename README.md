@@ -24,9 +24,11 @@ based on past performance.
    after it, with the bookmakers' margin removed). Horses we rate well above
    the market are flagged as undervalued, and a scorecard tracks how those
    flags perform. See [model/model_description.md](model/model_description.md).
-5. **Serve:** a Django app with a django-ninja API reads a daily SQLite
-   snapshot of the processed tables, so pages load quickly at almost no running
-   cost.
+5. **Serve:** the daily Glue job finishes by exporting the UK and Irish rows
+   of the tables the website needs to a single SQLite file in S3. The web
+   server checks for a new one every 15 minutes and swaps it in atomically,
+   and a Django app with a GraphQL API reads it read-only, so pages load
+   quickly at almost no running cost.
 
 ## Tech stack
 
@@ -36,7 +38,7 @@ based on past performance.
 | Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM       |
 | Processing     | AWS Glue (PySpark), Apache Iceberg, Athena            |
 | Modelling      | Python (NumPy, SciPy), AWS Glue Python shell          |
-| Backend & API  | Python, Django, django-ninja                          |
+| Backend & API  | Python, Django, GraphQL (Strawberry)                  |
 | Data serving   | SQLite snapshot generated daily from processed tables |
 
 ## Status
@@ -46,7 +48,8 @@ based on past performance.
 - ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
 - ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
 - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
-- 🚧 Django website and API
+- ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
+- 🚧 Django website and GraphQL API
 
 ## Repository structure
 
