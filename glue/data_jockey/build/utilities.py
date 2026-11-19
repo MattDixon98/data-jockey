@@ -40,8 +40,9 @@ def conform(df: DataFrame, schema: StructType) -> DataFrame:
 def with_snapshot(raw: DataFrame) -> DataFrame:
   """Adds `snapshot` (past, today, t-N) and `snapshot_rank` from source_file."""
   snapshot = conv.snapshot(col("source_file"))
-  rank = conv.snapshot_rank(snapshot)
-  return raw.withColumn("snapshot", snapshot).withColumn("snapshot_rank", rank)
+  rank = conv.snapshot_rank(col("snapshot"))
+  df = raw.withColumn("snapshot", snapshot)
+  return df.withColumn("snapshot_rank", rank)
 
 
 def most_trusted(df: DataFrame, keys: list[str]) -> DataFrame:
