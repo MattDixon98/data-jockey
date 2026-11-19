@@ -1,7 +1,7 @@
 """GraphQL types, one per racing model.
 
-Field descriptions come from the models' help_text, so only fields that
-aren't model columns describe themselves here.
+Field descriptions come from the models' help_text (shared with the REST
+API), so only fields that aren't model columns describe themselves here.
 Ids are plain Ints (the source's ids, all well inside GraphQL's 32-bit Int).
 Lists that can grow without bound (a jockey's rides, a course's races) aren't
 fields here: they're paginated top-level queries with filters (schema.py).

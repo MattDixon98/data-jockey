@@ -1,10 +1,10 @@
-"""The questions the API asks of the snapshot, answered once.
+"""The questions both APIs ask of the snapshot, answered once.
 
-The GraphQL API (api/graphql/) builds its responses from these querysets and
-rules: what a day's card is, which runners are undervalued and what order
-things come in. Kept apart from the API code so any other way of serving the
-data answers them the same way. The API adds only how it loads related rows
-(the GraphQL optimizer) and how it shapes the response.
+GraphQL (api/graphql/) and REST (api/rest/) build their responses from these
+querysets and rules, so they can't disagree about what a day's card is, which
+runners are undervalued or what order things come in. What each API adds on
+top is only how it loads related rows (the GraphQL optimizer, the REST views'
+prefetches) and how it shapes the response.
 """
 
 from __future__ import annotations

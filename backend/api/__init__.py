@@ -1,6 +1,7 @@
-"""The public API over the serving snapshot, read-only.
+"""Both public APIs over the serving snapshot, read-only.
 
-- queries.py: the query layer the API builds on (querysets, orderings, rules).
+- queries.py: the shared query layer both APIs build on, so they can't disagree.
 - graphql/: Strawberry, at /graphql/.
-- tests/: an in-memory test snapshot (tests/snapshot.py) and the API's tests.
+- rest/: Django REST Framework, at /api/v1/.
+- tests/: one in-memory test snapshot (tests/snapshot.py) and a suite per API.
 """

@@ -7,9 +7,9 @@ snapshot. Rows that can refer to entries dropped before race day (odds
 snapshots, model rows at t-3/t-2) keep plain ride_id/horse_id columns instead,
 because those rides and horses aren't in runners/horses.
 
-help_text is what the API shows as each field's description (via
-STRAWBERRY_DJANGO's FIELD_DESCRIPTION_FROM_HELP_TEXT), so a column is
-described once, here.
+help_text is what the APIs show as each field's description (GraphQL via
+STRAWBERRY_DJANGO's FIELD_DESCRIPTION_FROM_HELP_TEXT, DRF by default), so a
+column is described once, here.
 """
 
 from django.db import models
