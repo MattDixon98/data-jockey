@@ -27,7 +27,7 @@ based on past performance.
 5. **Serve:** the daily Glue job finishes by exporting the UK and Irish rows
    of the tables the website needs to a single SQLite file in S3. The web
    server checks for a new one every 15 minutes and swaps it in atomically,
-   and a Django app with a GraphQL API reads it read-only, so pages load
+   and a Django app with GraphQL and REST APIs reads it read-only, so pages load
    quickly at almost no running cost.
 
 ## Tech stack
@@ -38,7 +38,7 @@ based on past performance.
 | Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM       |
 | Processing     | AWS Glue (PySpark), Apache Iceberg, Athena            |
 | Modelling      | Python (NumPy, SciPy), AWS Glue Python shell          |
-| Backend & API  | Python, Django, GraphQL (Strawberry)                  |
+| Backend & API  | Python, Django, GraphQL (Strawberry), REST (DRF)      |
 | Data serving   | SQLite snapshot generated daily from processed tables |
 
 ## Status
@@ -49,7 +49,7 @@ based on past performance.
 - ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
 - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
 - ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
-- 🚧 Django website and GraphQL API
+- 🚧 Django website, GraphQL and REST APIs
 
 ## Repository structure
 
