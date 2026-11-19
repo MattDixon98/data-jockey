@@ -1,7 +1,9 @@
 """Glue job: rebuild the clean Iceberg tables from the raw JSON.
 
-Reads every racecard and race file under past/, today/ and future/ with the
-explicit schemas, builds the tables (data_jockey.build, which picks the most
+First brings the staging table raw_files up to date with the raw bucket: only
+new and changed files are read from S3 (data_jockey.staging). Then it reads
+every racecard and race file under past/, today/ and future/ from there,
+parsed with the explicit schemas, builds the tables (data_jockey.build, which picks the most
 trusted snapshot of each race) and replaces each table's contents in a single
 Iceberg commit, so Athena never sees a half-written table. Tables are created
 from data_jockey.tables on the first run; a column added to the DDL later has
@@ -25,6 +27,7 @@ Needs the data_jockey package on the path (--extra-py-files on Glue).
 import json
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 import boto3
@@ -36,7 +39,7 @@ from pyspark.conf import SparkConf
 from pyspark.context import SparkContext
 from pyspark.sql.functions import lit
 
-from data_jockey import build, raw_schemas, serving
+from data_jockey import build, raw_schemas, serving, staging
 from data_jockey.models import ModelError, usable_models
 from data_jockey.tables import TABLES, ddl_columns
 
@@ -50,9 +53,14 @@ args = getResolvedOptions(
     "warehouse",
     "database",
     "model_location",
-    "snapshot_location"
+    "snapshot_location",
+    "restage_raw",
   ],
 )
+
+# Raw files fetched at once while staging, and per append to raw_files.
+FETCH_THREADS = 32
+STAGE_BATCH = 2000
 
 def read_models(location: str) -> list[dict]:
   """Every promoted model under `location` (s3://bucket/model/): promoted/*.json plus current.json, checked and ordered."""
@@ -77,6 +85,86 @@ def read_models(location: str) -> list[dict]:
     except json.JSONDecodeError as error:
       raise ModelError(f"{source}: not valid JSON ({error})")
   return usable_models(documents)
+
+
+def list_raw_files(bucket: str) -> dict[str, str]:
+  """Every raw racecard and race file in the bucket: source_file (s3://bucket/key, as read_raw names it) -> ETag."""
+  s3 = boto3.client("s3")
+  paginator = s3.get_paginator("list_objects_v2")
+  listed = {}
+  for phase in staging.PHASES:
+    for page in paginator.paginate(Bucket=bucket, Prefix=phase):
+      for item in page.get("Contents", []):
+        key = item["Key"]
+        if staging.file_kind(key) is not None:
+          listed[f"s3://{bucket}/{key}"] = item["ETag"]
+  return listed
+
+
+def fetch_raw_file(s3, source_file: str) -> dict[str, str]:
+  """One raw file as a raw_files row."""
+  bucket, key = source_file.removeprefix("s3://").split("/", 1)
+  response = s3.get_object(Bucket=bucket, Key=key)
+  content = response["Body"].read().decode("utf-8")
+  return {
+    "source_file": source_file,
+    "kind": staging.file_kind(key),
+    # The ETag of what was actually read, in case the file changed since the listing.
+    "etag": response["ETag"],
+    "content": content,
+  }
+
+
+def stage_raw_files(staging_table: str, raw_bucket: str, restage: bool) -> None:
+  """Bring raw_files up to date with the raw bucket (data_jockey.staging): remove changed and deleted files, then read and add new and changed ones."""
+  if restage:
+    spark.sql(f"DELETE FROM {staging_table}")
+
+  listed = list_raw_files(raw_bucket)
+  staged = {}
+  staged_rows = spark.table(staging_table).select(
+    "source_file", "etag"
+  ).collect()
+  for row in staged_rows:
+    staged[row.source_file] = row.etag
+  to_remove, to_add = staging.plan_staging(listed, staged)
+  print(f"Raw files: {len(listed)} in the bucket, {len(staged)} staged; removing {len(to_remove)}, adding {len(to_add)}")
+
+  if to_remove:
+    removed_rows = []
+    for source_file in to_remove:
+      removed_rows.append((source_file,))
+    removed = spark.createDataFrame(removed_rows, "source_file STRING")
+    removed.createOrReplaceTempView("raw_files_to_remove")
+    spark.sql(
+      f"MERGE INTO {staging_table} AS staged USING raw_files_to_remove AS removed "
+      f"ON staged.source_file = removed.source_file WHEN MATCHED THEN DELETE"
+    )
+
+  # One client shared by the threads (boto3 clients are safe to share; creating them isn't).
+  s3 = boto3.client("s3")
+  # Small files, so many at once; a batch at a time so the driver never holds them all.
+  schema = spark.table(staging_table).schema
+  with ThreadPoolExecutor(max_workers=FETCH_THREADS) as pool:
+    for start in range(0, len(to_add), STAGE_BATCH):
+      batch = to_add[start:start + STAGE_BATCH]
+      fetches = []
+      for source_file in batch:
+        fetches.append(pool.submit(fetch_raw_file, s3, source_file))
+      rows = []
+      for fetch in fetches:
+        rows.append(fetch.result())
+      spark.createDataFrame(rows, schema).writeTo(staging_table).append()
+      print(f"Staged {start + len(batch)} of {len(to_add)}")
+
+  # Exactly one row per file in the bucket, or the rebuild would read stale or missing data.
+  check = spark.table(staging_table).selectExpr("count(*) AS row_count", "count(DISTINCT source_file) AS file_count").first()
+  if check.row_count != len(listed) or check.file_count != len(listed):
+    raise RuntimeError(
+      f"{staging_table} has {check.row_count} rows for {check.file_count} files, but the bucket has {len(listed)}: "
+      f"rerun with --restage_raw true"
+    )
+
 
 conf = (
   SparkConf()
@@ -108,14 +196,17 @@ except (ModelError, ClientError) as error:
   print(f"Models not loaded, model_odds will be skipped: {error}")
 
 db = f"{CATALOG}.{args['database']}"
-raw_root = f"s3://{args['raw_bucket']}"
 
-# Every snapshot: past/, today/ and future/ (t-1, t-2, t-3 files).
-racecard_files = f"{raw_root}/{{past,today,future}}/racecards/date=*/*.json"
-race_files = f"{raw_root}/{{past,today,future}}/races/date=*/*.json"
+# Every snapshot (past/, today/ and future/ t-N files), read from the staged
+# copy rather than thousands of small files on S3.
+staging_table = f"{db}.{staging.STAGING_TABLE}"
+spark.sql(staging.RAW_FILES_DDL.format(db=db))
+restage = args["restage_raw"].lower() == "true"
+stage_raw_files(staging_table, args["raw_bucket"], restage)
 
-racecards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, racecard_files)
-races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files).cache()
+raw_files = spark.table(staging_table)
+racecards = staging.parse_staged(raw_files, "racecards", raw_schemas.RACECARD_MEETING)
+races = staging.parse_staged(raw_files, "races", raw_schemas.RACE).cache()
 
 for name, ddl in TABLES.items():
   spark.sql(ddl.format(db=db))
