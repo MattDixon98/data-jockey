@@ -39,5 +39,5 @@ model/build/
 *.egg-info/
 model/local-runs/
 
-# Serving snapshot (default DATA_JOCKEY_SNAPSHOT location)
+# Serving snapshot downloaded by fetch_snapshot (and its .etag)
 backend/data/

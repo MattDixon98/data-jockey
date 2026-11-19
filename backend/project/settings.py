@@ -72,11 +72,16 @@ TEMPLATES = [
 WSGI_APPLICATION = "project.wsgi.application"
 
 # The serving snapshot: the clean tables (UK/IRE) as one SQLite file, rebuilt
-# daily by the Glue job (glue/data_jockey/serving.py).
+# daily by the Glue job (glue/data_jockey/serving.py) and swapped in on the
+# server by `manage.py fetch_snapshot` (an atomic rename, so no restart).
 # A relative DATA_JOCKEY_SNAPSHOT is taken from backend/.
 SNAPSHOT_PATH = BASE_DIR / os.environ.get("DATA_JOCKEY_SNAPSHOT", "data/data_jockey.sqlite3")
-# The snapshot layout the racing models are written for (serving.FORMAT_VERSION).
+# Where fetch_snapshot downloads it from: s3://data-jockey-clean-<account>/serving/data_jockey.sqlite3
+SNAPSHOT_S3_URI = os.environ.get("DATA_JOCKEY_SNAPSHOT_S3_URI", "")
+# The snapshot layout the racing models are written for (serving.FORMAT_VERSION);
+# fetch_snapshot won't swap in a file with any other.
 SNAPSHOT_FORMAT_VERSION = 1
+AWS_REGION = "eu-west-2"
 
 DATABASES = {
   # Django's own tables (sessions, admin). Never the racing data.
