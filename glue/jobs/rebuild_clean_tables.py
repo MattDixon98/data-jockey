@@ -90,6 +90,7 @@ conf = (
 )
 
 sc = SparkContext.getOrCreate(conf=conf)
+sc.setLogLevel("WARN")
 glue_context = GlueContext(sc)
 spark = glue_context.spark_session
 job = Job(glue_context)
