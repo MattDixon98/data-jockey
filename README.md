@@ -16,38 +16,26 @@ based on past performance.
 3. **Process:** AWS Glue (PySpark) jobs flatten and clean the raw data (odds to
    decimal, distances to yards, times to seconds) into Apache Iceberg tables
    that can be queried with Athena.
-4. **Model:** the daily Glue job also builds each runner's features (form, rating
-   against the field, course/distance/ground record, jockey and trainer win
-   rates) using only data from before the race. A model trained monthly on AWS
-   turns those into our own win odds for every runner, which are compared with
-   the market's (the racecard forecast before the race, the starting price
-   after it, with the bookmakers' margin removed). Horses we rate well above
-   the market are flagged as undervalued, and a scorecard tracks how those
-   flags perform. See [model/model_description.md](model/model_description.md).
-5. **Serve:** the daily Glue job finishes by exporting the UK and Irish rows
-   of the tables the website needs to a single SQLite file in S3. On the web
-   server, a systemd timer runs a Django management command every 15 minutes
-   that checks the file's S3 ETag, downloads a new one, verifies it (integrity,
-   format version) and swaps it in with an atomic rename, with no restart.
-   Django reads it through unmanaged, read-only models, so the site needs no
-   database server and costs almost nothing to run.
-6. **API:** a REST API built with Django REST Framework is the main way in:
-   racecards, results, prices at every crawl, our odds and the undervalued
-   flags, plus the model's track record. It has filtering (django-filter),
-   paging, OpenAPI docs with Swagger UI (drf-spectacular), HTTP caching (each
-   response's ETag comes from when the data was built, so unchanged data is a
-   cheap `304 Not Modified`) and a per-IP rate limit. A GraphQL API
-   (Strawberry) serves the same data alongside it, with query depth and size
-   limits. Both build on one shared query layer, so they can't disagree, and
-   every list loads in a fixed number of SQL queries however long it is.
-7. **Website** *(in progress)*: a React single-page app, separate from Django,
-   that reads everything from the REST API: today's races and odds, our
-   undervalued picks next to the scorecard, race pages with each runner's
-   price history, and horse, jockey and trainer records. It's built to static
-   files, so no Node server runs in production. Django serves only the API,
-   from a small EC2 instance defined in its own SAM stack, with gunicorn behind
-   Caddy, which also serves the React build from the same domain (so no CORS)
-   and gets HTTPS certificates automatically.
+4. **Model:** the Glue job builds each runner's pre-race features (form, rating,
+   course/distance/ground record, jockey and trainer win rates). A model trained
+   monthly in a Glue Python shell job (NumPy, SciPy) turns them into our own win
+   odds, which are compared with the market's (bookmakers' margin removed) to flag
+   undervalued horses, with a scorecard tracking how those flags perform.
+   See [model/model_description.md](model/model_description.md).
+5. **Serve:** the Glue job exports the UK and Irish data to a single SQLite file
+   in S3. A systemd timer on the web server runs a Django management command that
+   checks its ETag, then downloads, verifies and atomically swaps in a new one with
+   no restart. Django reads it through unmanaged, read-only models, so there's no
+   database server to run.
+6. **API:** the main API is Django REST Framework, with filtering (django-filter),
+   OpenAPI docs and Swagger UI (drf-spectacular), ETag-based HTTP caching and a
+   per-IP rate limit. A GraphQL API (Strawberry, with depth and size limits) sits
+   alongside it on the same query layer, and every list loads in a fixed number
+   of SQL queries.
+7. **Website** *(in progress)*: a React single-page app built to static files,
+   reading the REST API. It's served from one EC2 instance (its own SAM stack),
+   with gunicorn behind Caddy, which also serves the React build from the same
+   domain (no CORS) and handles HTTPS automatically.
 
 ## Tech stack
 
