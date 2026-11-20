@@ -3,12 +3,25 @@ import { Link, useParams } from "react-router-dom";
 import { useRace } from "../api";
 import { OurOdds, Status, ValueBadge } from "../components";
 import { longDate, ordinal, percent, raceTypeLabel } from "../format";
+import { type SortKeys, useSortable } from "../sort";
+import type { Runner } from "../types";
+
+const RUNNER_SORT: SortKeys<Runner> = {
+  position: (runner) => runner.finish_position,
+  cloth: (runner) => runner.cloth_number,
+  horse: (runner) => runner.horse.name,
+  jockey: (runner) => runner.jockey?.name,
+  odds: (runner) => runner.odds_decimal,
+  ours: (runner) => runner.model_odds?.model_odds_decimal,
+  chance: (runner) => runner.model_odds?.model_prob,
+};
 
 export default function RacePage() {
   const { raceId = "" } = useParams();
   const query = useRace(raceId);
   const race = query.data;
   const done = race?.result_status === "complete";
+  const { rows: runners, header } = useSortable(race?.runners ?? [], RUNNER_SORT);
 
   return (
     <Status query={query}>
@@ -37,17 +50,17 @@ export default function RacePage() {
             <table>
               <thead>
                 <tr>
-                  {done && <th>Pos</th>}
-                  <th className="num">No.</th>
-                  <th>Horse</th>
-                  <th>Jockey / trainer</th>
-                  <th className="num">{done ? "SP" : "Odds"}</th>
-                  <th className="num">Ours</th>
-                  <th className="num">Our chance</th>
+                  {done && header("position", "Pos")}
+                  {header("cloth", "No.", "num")}
+                  {header("horse", "Horse")}
+                  {header("jockey", "Jockey / trainer")}
+                  {header("odds", done ? "SP" : "Odds", "num")}
+                  {header("ours", "Ours", "num")}
+                  {header("chance", "Our chance", "num")}
                 </tr>
               </thead>
               <tbody>
-                {race.runners.map((runner) => (
+                {runners.map((runner) => (
                   <tr key={runner.ride_id} className={runner.status === "RUNNER" ? "" : "gone"}>
                     {done && <td>{runner.finish_position ? ordinal(runner.finish_position) : runner.non_finisher_reason ?? "–"}</td>}
                     <td className="num">{runner.cloth_number}</td>

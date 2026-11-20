@@ -16,6 +16,7 @@ export interface ModelValue {
   model_prob: number;
   market: string;
   market_odds: string | null;
+  market_odds_decimal: number | null;
   market_prob: number | null;
   edge: number | null;
   expected_value: number | null;

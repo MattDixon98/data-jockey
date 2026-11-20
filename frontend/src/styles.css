@@ -81,6 +81,16 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--line); vertical-align: top; }
 th { border-top: 0; color: var(--muted); font-weight: 500; font-size: 0.85rem; }
 .num { text-align: right; white-space: nowrap; }
+th button.sort {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+th button.sort:hover { color: var(--text); }
 .gone { opacity: 0.5; }
 
 .muted { color: var(--muted); }
