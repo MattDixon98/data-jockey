@@ -45,7 +45,7 @@ class Course(SnapshotModel):
   course_id = models.BigIntegerField(primary_key=True)
   name = models.TextField(null=True)
   shortcode = models.TextField(null=True)
-  country_code = models.TextField(null=True)
+  country_code = models.TextField(null=True, help_text="ENG, Scot, Wale, Nort or Eire.")
   country_name = models.TextField(null=True)
   feed_source = models.TextField(null=True)
 
@@ -69,7 +69,7 @@ class Race(SnapshotModel):
   race_id = models.BigIntegerField(primary_key=True)
   meeting = _fk(Meeting, "meeting_id", "races", null=True)
   course = _fk(Course, "course_id", "races", null=True)
-  country_code = models.TextField(null=True)
+  country_code = models.TextField(null=True, help_text="ENG, Scot, Wale, Nort or Eire.")
   race_date = models.DateField(null=True)
   race_time = models.TextField(null=True, help_text="Scheduled time, UK local (HH:MM).")
   off_time = models.TextField(null=True)
