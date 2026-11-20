@@ -1,0 +1,37 @@
+# Caddy in front of gunicorn (deploy/systemd/data-jockey-web.service).
+# Copied to /etc/caddy/Caddyfile by deploy/setup.sh.
+#
+# Plain HTTP on the Elastic IP for now. Once the domain points here, replace
+# ":80" with the domain name and Caddy gets and renews a Let's Encrypt
+# certificate by itself (and redirects HTTP to HTTPS).
+#
+# reverse_proxy sets X-Forwarded-For to the real client address, replacing any
+# value the client sent; Django reads it with DJANGO_NUM_PROXIES=1.
+#
+# The React app (built by scripts/deploy.sh, unpacked to ./site) is served from
+# here as static files; only the APIs and the admin go to Django (and /static/ comes from collectstatic). Unknown paths
+# get index.html so React Router can handle them (/races/123, /scorecard).
+:80 {
+  encode zstd gzip
+
+  @django path /api/* /graphql* /admin/*
+  # collectstatic's output (admin and browsable API CSS/JS), straight from disk.
+  handle /static/* {
+    root * /opt/data-jockey/backend/staticfiles
+    uri strip_prefix /static
+    file_server
+  }
+
+  handle @django {
+    reverse_proxy 127.0.0.1:8000
+  }
+
+  handle {
+    root * /opt/data-jockey/backend/site
+    # Vite fingerprints everything under /assets/, so it can be cached for good.
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+    try_files {path} /index.html
+    file_server
+  }
+}

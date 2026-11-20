@@ -172,4 +172,7 @@ USE_I18N = True
 USE_TZ = True
 
 STATIC_URL = "/static/"
+# `manage.py collectstatic` (run by deploy/setup.sh) gathers the admin's and the browsable API's
+# CSS/JS here; Caddy serves it directly, Django doesn't once DEBUG is off.
+STATIC_ROOT = BASE_DIR / "staticfiles"
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"

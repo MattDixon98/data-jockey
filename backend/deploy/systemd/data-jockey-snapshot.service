@@ -3,11 +3,10 @@
 # data-jockey-snapshot.timer; run by hand with
 #   sudo systemctl start data-jockey-snapshot.service
 #
-# Paths and the user are placeholders until the data-jockey-web stack sets up
-# the server: app checkout in /opt/data-jockey, its virtualenv in
-# /opt/data-jockey/venv, settings (DJANGO_SECRET_KEY, DATA_JOCKEY_SNAPSHOT,
-# DATA_JOCKEY_SNAPSHOT_S3_URI...) in /etc/data-jockey/env. AWS credentials
-# come from the instance role.
+# Installed by deploy/setup.sh, which sets up the layout: code in
+# /opt/data-jockey/backend (the snapshot in its data/), virtualenv in
+# /opt/data-jockey/venv, settings (DJANGO_SECRET_KEY, DATA_JOCKEY_SNAPSHOT_S3_URI...)
+# in /etc/data-jockey/env. AWS credentials come from the instance role.
 [Unit]
 Description=Data Jockey: fetch the serving snapshot
 Wants=network-online.target

@@ -1,0 +1,29 @@
+# The Django site (both APIs) under gunicorn, behind Caddy (deploy/Caddyfile).
+# Installed and restarted by deploy/setup.sh on every deploy. Logs:
+#   journalctl -u data-jockey-web.service
+[Unit]
+Description=Data Jockey: Django under gunicorn
+After=network.target
+
+[Service]
+Type=notify
+NotifyAccess=main
+User=data-jockey
+Group=data-jockey
+WorkingDirectory=/opt/data-jockey/backend
+EnvironmentFile=/etc/data-jockey/env
+# Local only: Caddy is the only way in. Two workers for a 2-vCPU, 1 GB box.
+ExecStart=/opt/data-jockey/venv/bin/gunicorn project.wsgi:application \
+  --bind 127.0.0.1:8000 \
+  --workers 2 \
+  --access-logfile -
+ExecReload=/bin/kill -s HUP $MAINPID
+KillMode=mixed
+Restart=on-failure
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+
+[Install]
+WantedBy=multi-user.target

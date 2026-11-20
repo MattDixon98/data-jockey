@@ -1,0 +1,22 @@
+# Settings for `sam deploy` (no `sam build`: there's nothing to compile). Deploy
+# with scripts/deploy.sh, which also uploads the code and sets up the server.
+# The profile is pinned so deploys always go to the data-jockey AWS account.
+version = 0.1
+
+[default.global.parameters]
+stack_name = "data-jockey-web"
+region = "eu-west-2"
+profile = "data-jockey"
+
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+resolve_s3 = true
+s3_prefix = "data-jockey-web"
+confirm_changeset = false
+fail_on_empty_changeset = false
+# Ubuntu 24.04 arm64 (ubuntu-noble-24.04-arm64-server-20261119), pinned so a
+# deploy never replaces the instance by surprise. Changing it replaces the
+# instance; run ./deploy web straight after to set the new one up. Latest:
+#   aws ssm get-parameters --profile data-jockey --region eu-west-2 --query 'Parameters[0].Value' --output text \
+#     --names /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+parameter_overrides = "ImageId=ami-0fc9bb7f3686ebbce"

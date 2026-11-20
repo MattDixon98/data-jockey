@@ -12,12 +12,14 @@ the subproject directory.
 | `crawlers/` | Daily scraper Lambda → raw S3 bucket     | TypeScript, Node 22, AWS SAM   | Deployed      |
 | `glue/`     | Raw JSON → clean Iceberg tables          | PySpark 3.5.4 (Glue 5.0), SAM  | In progress   |
 | `model/`    | Monthly training of the win-odds weights | Python 3.9 (Glue Python shell), numpy/scipy, SAM | In progress |
-| `backend/`  | Website + API                            | Django 5.2, DRF, Strawberry GraphQL | REST (main) + GraphQL APIs, not deployed |
+| `backend/`  | Website + API                            | Django 5.2, DRF, Strawberry GraphQL; EC2, SAM | REST (main) + GraphQL APIs, server stack in progress |
 
 ## Commands
 
-From the repo root, `./deploy crawlers|glue|model|all` runs a subproject's own deploy (`all` in that
+From the repo root, `./deploy crawlers|glue|model|web|all` runs a subproject's own deploy (`all` in that
 order: each stack uses a bucket the one before it creates).
+`./deploy web-kill` deletes the web stack (`backend/scripts/server.sh`: server down, no cost); `./deploy web-start`
+(= `./deploy web`) builds it again from scratch, on a new IP.
 
 ### crawlers/
 ```bash
@@ -59,6 +61,8 @@ python manage.py runserver        # GraphiQL at /graphql/, REST at /api/v1/ (Swa
 python manage.py test api         # both APIs' tests (in-memory snapshot, no real file needed)
 python manage.py export_schema api.graphql.schema   # print the GraphQL SDL
 python manage.py spectacular --validate --file openapi.yaml   # write + check the REST OpenAPI schema
+./scripts/deploy.sh               # bundle backend/ to S3, sam deploy, run deploy/setup.sh on the box via SSM
+aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-west-2   # shell on the server (no SSH)
 ```
 
 ## Architecture
@@ -91,6 +95,11 @@ python manage.py spectacular --validate --file openapi.yaml   # write + check th
    downloads to a temp file, checks it and `os.replace`s it in: no restart, each request opens the current file.
    Both APIs live in `api/` and sit on those models: GraphQL (`api/graphql/`, Strawberry, `/graphql/`) and REST
    (`api/rest/`, DRF, `/api/v1/`), both through `api/queries.py`; see "APIs" below.
+   **Server** (`backend/template.yaml`, stack `data-jockey-web`): one EC2 t4g.micro (Ubuntu 24.04, AMI pinned in
+   samconfig) with an Elastic IP, ports 80/443 only, no SSH. No user data: `scripts/deploy.sh` uploads the bundle and
+   runs the idempotent [deploy/setup.sh](backend/deploy/setup.sh) through SSM Run Command, which sets up a fresh box or
+   updates a running one (code in `/opt/data-jockey/backend`, venv beside it, settings in `/etc/data-jockey/env`,
+   rewritten every deploy except the generated secret key; gunicorn on 127.0.0.1:8000 behind Caddy).
    A new snapshot column = DDL + a model field (+ a type field to expose it); a layout change the site must know about = bump
    `serving.FORMAT_VERSION` and `SNAPSHOT_FORMAT_VERSION` in settings together (fetch refuses a mismatch).
 

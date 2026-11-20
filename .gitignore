@@ -9,6 +9,7 @@ venv/
 # Django
 *.log
 /staticfiles/
+backend/staticfiles/
 /media/
 
 # Node / TypeScript
@@ -16,6 +17,7 @@ node_modules/
 .crawlers-cache/
 *.tsbuildinfo
 crawlers/dist/
+frontend/dist/
 
 # AWS SAM build output
 .aws-sam/
