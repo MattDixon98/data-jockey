@@ -37,8 +37,13 @@ INSTALLED_APPS = [
   "django.contrib.sessions",
   "django.contrib.messages",
   "django.contrib.staticfiles",
+  "strawberry_django",
+  "rest_framework",
+  "django_filters",
+  "drf_spectacular",
   "app",
   "racing",
+  "api",
 ]
 
 MIDDLEWARE = [
@@ -101,6 +106,65 @@ DATABASES = {
 DATABASE_ROUTERS = ["racing.routers.SnapshotRouter"]
 
 AUTH_PASSWORD_VALIDATORS = []
+
+# Both APIs (api/graphql/, api/rest/): every paginated list is capped, so no
+# request can pull a whole table.
+API_PAGE_SIZE = 50
+API_MAX_PAGE_SIZE = 200
+
+STRAWBERRY_DJANGO = {
+  "PAGINATION_DEFAULT_LIMIT": API_PAGE_SIZE,
+  "PAGINATION_MAX_LIMIT": API_MAX_PAGE_SIZE,
+  # Column descriptions are the racing models' help_text, as in the REST docs.
+  "FIELD_DESCRIPTION_FROM_HELP_TEXT": True,
+}
+
+# The REST API (api/rest/): read-only and public, so no authentication (and no
+# cookies, so no CSRF). Responses carry an ETag from the snapshot's built_at and
+# may be cached this many seconds (api/rest/caching.py); fetch_snapshot checks
+# for a new snapshot every 15 minutes.
+API_CACHE_MAX_AGE = 300
+
+# Per-IP rate limit on the REST API (DRF AnonRateThrottle). The counters live in
+# Django's cache: none is configured, so the default per-process memory cache,
+# which means each gunicorn worker counts separately (the real limit is this x
+# the worker count). Fine for one small server; a shared cache would make it exact.
+API_RATE_LIMIT = "60/min"
+# How many proxies sit in front of Django. Behind Caddy every request comes from
+# 127.0.0.1, so the client's IP has to be read from X-Forwarded-For (set this to 1
+# on the server). 0 (local, no proxy) uses the connection's own address and
+# ignores X-Forwarded-For, which a client could fake.
+API_NUM_PROXIES = int(os.environ.get("DJANGO_NUM_PROXIES", "0"))
+
+REST_FRAMEWORK = {
+  "DEFAULT_AUTHENTICATION_CLASSES": [],
+  "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
+  "DEFAULT_RENDERER_CLASSES": [
+    "rest_framework.renderers.JSONRenderer",
+    "rest_framework.renderers.BrowsableAPIRenderer",
+  ],
+  "DEFAULT_PAGINATION_CLASS": "api.rest.pagination.Pagination",
+  "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
+  "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
+  "EXCEPTION_HANDLER": "api.rest.views.exception_handler",
+  "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
+  "DEFAULT_THROTTLE_RATES": {"anon": API_RATE_LIMIT},
+  "NUM_PROXIES": API_NUM_PROXIES,
+}
+
+SPECTACULAR_SETTINGS = {
+  "TITLE": "Data Jockey API",
+  "DESCRIPTION": (
+    "UK/IRE horse racing: racecards, results, prices at each crawl, our own fair win odds and "
+    "the undervalued flags, and the model's track record. Read-only; the data is rebuilt once a day. "
+    "The same data is available as GraphQL at /graphql/. "
+    f"Rate limited per IP address ({API_RATE_LIMIT}): over that, 429 Too Many Requests with a "
+    "Retry-After header."
+  ),
+  "VERSION": "1",
+  "SERVE_INCLUDE_SCHEMA": False,
+  "SCHEMA_PATH_PREFIX": "/api/v1",
+}
 
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "UTC"
