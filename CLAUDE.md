@@ -12,7 +12,7 @@ the subproject directory.
 | `crawlers/` | Daily scraper Lambda → raw S3 bucket     | TypeScript, Node 22, AWS SAM   | Deployed      |
 | `glue/`     | Raw JSON → clean Iceberg tables          | PySpark 3.5.4 (Glue 5.0), SAM  | In progress   |
 | `model/`    | Monthly training of the win-odds weights | Python 3.9 (Glue Python shell), numpy/scipy, SAM | In progress |
-| `backend/`  | Website + API                            | Django 5.2, Strawberry GraphQL, DRF | GraphQL + REST APIs, not deployed |
+| `backend/`  | Website + API                            | Django 5.2, DRF, Strawberry GraphQL | REST (main) + GraphQL APIs, not deployed |
 
 ## Commands
 
@@ -158,6 +158,8 @@ the current model on the test weeks. Keep it **Python 3.9-compatible** (`from __
 Features update daily in the rebuild; training only refreshes the weights.
 
 ### APIs (backend/api)
+**REST is the main API** (the frontend uses it); GraphQL is kept, live and tested, as a secondary showcase. New
+features go into REST first; add them to GraphQL only when it's cheap (shared query + a type field), no strict parity.
 One Django app, `api`: `queries.py` (shared), `graphql/`, `rest/`, `tests/` (`snapshot.py`, the in-memory test
 snapshot and `add_runners()`, plus `test_graphql.py`, `test_rest.py`). What both APIs need lives once and is imported:
 - [api/queries.py](backend/api/queries.py): querysets and rules (orderings, the undervalued rule, name search,
@@ -179,7 +181,9 @@ REST (DRF): generic read-only views in `views.py` (GET/HEAD only, no authenticat
 queryset from `queries` and adding the prefetches its serializer needs; query strings validated by the `*Params`
 serializers (`params_class`) or django-filter (`filters.py`); limit/offset pagination; OpenAPI by drf-spectacular
 (`/api/v1/schema/`, `/api/v1/docs/`). `caching.py`: ETag = snapshot `built_at` + format, `Cache-Control: public,
-max-age=API_CACHE_MAX_AGE`, 304 before any racing query. Snapshots are the raw values (`t-1`, `today`...), not the
+max-age=API_CACHE_MAX_AGE`, 304 before any racing query. Rate limit: DRF `AnonRateThrottle` per IP
+(`API_RATE_LIMIT`, counters in the per-process memory cache; `DJANGO_NUM_PROXIES=1` behind Caddy, 0 locally); tests
+clear the cache in `setUp`. Snapshots are the raw values (`t-1`, `today`...), not the
 GraphQL enum names. Method fields reuse one nested serializer per parent (building one per row tripled a card's time).
 
 ### Tests (glue/tests)

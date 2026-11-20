@@ -25,21 +25,41 @@ based on past performance.
    the market are flagged as undervalued, and a scorecard tracks how those
    flags perform. See [model/model_description.md](model/model_description.md).
 5. **Serve:** the daily Glue job finishes by exporting the UK and Irish rows
-   of the tables the website needs to a single SQLite file in S3. The web
-   server checks for a new one every 15 minutes and swaps it in atomically,
-   and a Django app with GraphQL and REST APIs reads it read-only, so pages load
-   quickly at almost no running cost.
+   of the tables the website needs to a single SQLite file in S3. On the web
+   server, a systemd timer runs a Django management command every 15 minutes
+   that checks the file's S3 ETag, downloads a new one, verifies it (integrity,
+   format version) and swaps it in with an atomic rename, with no restart.
+   Django reads it through unmanaged, read-only models, so the site needs no
+   database server and costs almost nothing to run.
+6. **API:** a REST API built with Django REST Framework is the main way in:
+   racecards, results, prices at every crawl, our odds and the undervalued
+   flags, plus the model's track record. It has filtering (django-filter),
+   paging, OpenAPI docs with Swagger UI (drf-spectacular), HTTP caching (each
+   response's ETag comes from when the data was built, so unchanged data is a
+   cheap `304 Not Modified`) and a per-IP rate limit. A GraphQL API
+   (Strawberry) serves the same data alongside it, with query depth and size
+   limits. Both build on one shared query layer, so they can't disagree, and
+   every list loads in a fixed number of SQL queries however long it is.
+7. **Website** *(in progress)*: a React single-page app, separate from Django,
+   that reads everything from the REST API: today's races and odds, our
+   undervalued picks next to the scorecard, race pages with each runner's
+   price history, and horse, jockey and trainer records. It's built to static
+   files, so no Node server runs in production. Django serves only the API,
+   from a small EC2 instance defined in its own SAM stack, with gunicorn behind
+   Caddy, which also serves the React build from the same domain (so no CORS)
+   and gets HTTPS certificates automatically.
 
 ## Tech stack
 
-| Layer          | Technology                                            |
-|----------------|-------------------------------------------------------|
-| Crawlers       | TypeScript, Node.js 22                                |
-| Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM       |
-| Processing     | AWS Glue (PySpark), Apache Iceberg, Athena            |
-| Modelling      | Python (NumPy, SciPy), AWS Glue Python shell          |
-| Backend & API  | Python, Django, GraphQL (Strawberry), REST (DRF)      |
-| Data serving   | SQLite snapshot generated daily from processed tables |
+| Layer          | Technology                                                                                            |
+|----------------|-------------------------------------------------------------------------------------------------------|
+| Crawlers       | TypeScript, Node.js 22                                                                                |
+| Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM                                                       |
+| Processing     | AWS Glue (PySpark), Apache Iceberg, Athena                                                            |
+| Modelling      | Python (NumPy, SciPy), AWS Glue Python shell                                                          |
+| Data serving   | SQLite snapshot generated daily from processed tables                                                 |
+| Backend & API  | Python, Django, Django REST Framework, django-filter, drf-spectacular (OpenAPI), GraphQL (Strawberry) |
+| Website        | React, EC2, Caddy, gunicorn (planned)                                                                 |
 
 ## Status
 
@@ -49,7 +69,9 @@ based on past performance.
 - ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
 - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
 - ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
-- 🚧 Django website, GraphQL and REST APIs
+- ✅ REST API (OpenAPI docs, HTTP caching, rate limiting) and a GraphQL API serving the daily data; running
+  locally, not yet deployed
+- 🚧 Website: React frontend and hosting still to build
 
 ## Repository structure
 
@@ -58,7 +80,8 @@ based on past performance.
   scorecard), tests, Athena checks and AWS SAM template
 - `model/`: monthly model training (Glue Python shell job), its `data_jockey_model` package, tests, AWS SAM
   template and [model_description.md](model/model_description.md)
-- `backend/`: Django project
+- `backend/`: Django project: read-only models over the daily SQLite file, the command that fetches new ones,
+  the REST and GraphQL APIs (`api/`) and their tests
 - `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
   dependency order
 
