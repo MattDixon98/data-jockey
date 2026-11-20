@@ -231,8 +231,6 @@ class Runner:
     return _at_snapshot(self.model_value.all(), snapshot, self.snapshot)
 
 
-Runner.get_queryset(models.Runner.objects.all(), None)  # type: ignore
-
 @strawberry_django.type(models.Race)
 class Race:
   race_id: int
