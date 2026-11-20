@@ -1,0 +1,123 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: data-jockey website, one EC2 box running Django (gunicorn) behind Caddy
+
+# The box is set up by scripts/deploy.sh, not by user data: after `sam deploy`
+# it uploads the backend bundle and runs deploy/setup.sh on the instance through
+# SSM Run Command. The same idempotent script sets up a fresh instance and
+# updates a running one, so a replaced instance only needs `./deploy web`.
+# No SSH: the security group only opens 80/443; for a shell use
+#   aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-west-2
+
+Parameters:
+  ImageId:
+    Type: AWS::EC2::Image::Id
+    Description: >-
+      Ubuntu 24.04 arm64 AMI, pinned in samconfig.toml (changing it replaces the
+      instance). Current one: aws ssm get-parameters --names
+      /aws/service/canonical/ubuntu/server/24.04/stable/current/arm64/hvm/ebs-gp3/ami-id
+  InstanceType:
+    Type: String
+    Default: t4g.micro
+
+Resources:
+  # Default VPC (no subnet given, so the default subnet of a default AZ).
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: data-jockey web server, HTTP and HTTPS only (no SSH, shell via SSM)
+      SecurityGroupIngress:
+        - Description: HTTP (and Let's Encrypt's HTTP challenge)
+          IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - Description: HTTPS
+          IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: data-jockey-web
+
+  # Role and instance profile names are generated from the stack name
+  # (data-jockey-web-...), inside the deployer policy's data-jockey-* scope.
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        # SSM agent: Run Command (deploys) and Session Manager (shell).
+        - arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore
+      Policies:
+        - PolicyName: read-snapshot-and-code
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReadServingSnapshot
+                # fetch_snapshot: HEAD + GET of the SQLite file, nothing else in the bucket.
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/serving/*
+              - Sid: ReadBackendBundle
+                # The code bundle scripts/deploy.sh uploads.
+                Effect: Allow
+                Action: s3:GetObject
+                Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/code/web/*
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref InstanceRole
+
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref ImageId
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref InstanceProfile
+      SecurityGroupIds:
+        - !GetAtt SecurityGroup.GroupId
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeType: gp3
+            VolumeSize: 10
+            Encrypted: true
+            DeleteOnTermination: true
+      Tags:
+        - Key: Name
+          Value: data-jockey-web
+
+  # A fixed address for the DNS record, kept if the instance is replaced.
+  ElasticIp:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      Tags:
+        - Key: Name
+          Value: data-jockey-web
+
+  ElasticIpAssociation:
+    Type: AWS::EC2::EIPAssociation
+    Properties:
+      AllocationId: !GetAtt ElasticIp.AllocationId
+      InstanceId: !Ref Instance
+
+Outputs:
+  InstanceId:
+    Description: The web server (for SSM Run Command / start-session)
+    Value: !Ref Instance
+  PublicIp:
+    Description: Elastic IP, where the site is served (and the domain's A record points)
+    Value: !Ref ElasticIp
+  SiteUrl:
+    Description: The site, over plain HTTP until the domain is set up
+    Value: !Sub http://${ElasticIp}/
