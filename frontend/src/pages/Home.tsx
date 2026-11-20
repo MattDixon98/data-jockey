@@ -2,22 +2,31 @@ import { Link, useSearchParams } from "react-router-dom";
 
 import { useMeetings, useUndervalued } from "../api";
 import { OurOdds, RaceLink, Status, ValueBadge } from "../components";
-import { addDays, longDate, raceTypeLabel, todayUk } from "../format";
+import { addDays, longDate, ordinal, raceTypeLabel, todayUk } from "../format";
 import type { Meeting, Pick } from "../types";
 
-function Picks({ date }: { date: string }) {
-  const picks = useUndervalued(date);
+const TOP_PICKS = 10;
+
+/** How far our chance is above the market's, in percentage points. Ranking by
+ * the API's `edge` (relative: ours / market's - 1) puts 100/1 outsiders first. */
+const gap = (pick: Pick): number => (pick.model_value?.model_prob ?? 0) - (pick.model_value?.market_prob ?? 0);
+
+/** The day's most undervalued runners: biggest gap between our chance and the market's first. */
+function TopPicks({ date }: { date: string }) {
+  const query = useUndervalued(date);
+  const picks = [...(query.data ?? [])].sort((a, b) => gap(b) - gap(a)).slice(0, TOP_PICKS);
+
   return (
     <section className="panel">
       <h2>
-        Undervalued runners <span className="tag">experimental</span>
+        Top undervalued horses <span className="tag">experimental</span>
       </h2>
-      <p className="muted">
-        Where our model gives a horse a better chance than the betting market does.{" "}
-        <Link to="/scorecard">So far it hasn't beaten the market</Link>, so treat these as a curiosity.
+      <p className="muted small">
+        Where our model rates a horse's chance highest above the market's. So far these{" "}
+        <Link to="/scorecard">haven't beaten the market</Link>.
       </p>
-      <Status query={picks}>
-        {picks.data?.length ? (
+      <Status query={query}>
+        {picks.length ? (
           <table>
             <thead>
               <tr>
@@ -28,7 +37,7 @@ function Picks({ date }: { date: string }) {
               </tr>
             </thead>
             <tbody>
-              {picks.data.map((pick: Pick) => (
+              {picks.map((pick: Pick) => (
                 <tr key={pick.ride_id}>
                   <td>
                     <RaceLink id={pick.race.race_id}>
@@ -37,8 +46,9 @@ function Picks({ date }: { date: string }) {
                   </td>
                   <td>
                     {pick.horse.name} <ValueBadge runner={pick} />
+                    {pick.finish_position && <div className="muted small">Finished {ordinal(pick.finish_position)}</div>}
                   </td>
-                  <td className="num">{pick.model_value?.market_odds ?? pick.odds ?? "–"}</td>
+                  <td className="num">{pick.model_value?.market_odds ?? "–"}</td>
                   <td className="num">
                     <OurOdds runner={pick} />
                   </td>
@@ -47,7 +57,7 @@ function Picks({ date }: { date: string }) {
             </tbody>
           </table>
         ) : (
-          <p>No undervalued runners for this day.</p>
+          <p>No undervalued horses on this day.</p>
         )}
       </Status>
     </section>
@@ -122,7 +132,7 @@ export default function Home() {
         </button>
         {date !== today && <button onClick={() => go(today)}>Today</button>}
       </div>
-      <Picks date={date} />
+      <TopPicks date={date} />
       <Status query={meetings}>
         {meetings.data?.length ? (
           meetings.data.map((meeting) => <MeetingCard key={meeting.meeting_id} meeting={meeting} />)

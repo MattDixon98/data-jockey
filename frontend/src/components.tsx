@@ -12,7 +12,13 @@ export function Status({ query, children }: { query: { isLoading: boolean; error
 export function ValueBadge({ runner }: { runner: Runner }) {
   const value = runner.model_value;
   if (!value?.undervalued) return null;
-  return <span className="badge">undervalued {signedPercent(value.edge)}</span>;
+  // Experimental: the picks haven't beaten the market yet (see the Track record page).
+  const title = "Our model rates this horse's chance above the market's. Experimental: see Track record.";
+  return (
+    <span className="badge" title={title}>
+      🔥 Undervalued {signedPercent(value.edge)}
+    </span>
+  );
 }
 
 /** Our price and chance for a runner, or a dash if it isn't priced. */

@@ -13,6 +13,7 @@ export interface ModelOdds {
 }
 
 export interface ModelValue {
+  model_prob: number;
   market: string;
   market_odds: string | null;
   market_prob: number | null;
@@ -72,6 +73,7 @@ export interface Meeting {
   races: RaceCard[];
 }
 
+/** A runner with the race it's in (the /undervalued/ list). */
 export interface Pick extends Runner {
   race: Race;
 }
