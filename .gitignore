@@ -16,6 +16,7 @@ node_modules/
 .crawlers-cache/
 *.tsbuildinfo
 crawlers/dist/
+frontend/dist/
 
 # AWS SAM build output
 .aws-sam/

@@ -3,6 +3,7 @@
 #
 #   ./scripts/deploy.sh        (from backend/)
 #
+# 0. Builds the React frontend (../frontend, npm run build) and uploads it beside the bundle.
 # 1. Bundles backend/ (tracked and new files, nothing git-ignored: no .env, no
 #    snapshot, no db.sqlite3) to s3://data-jockey-clean-<account>/code/web/.
 # 2. `sam deploy` (instance, Elastic IP, role, security group).
@@ -33,6 +34,13 @@ tar -czf "$build_dir/backend.tar.gz" --null -T "$build_dir/files"
 "${AWS[@]}" s3 cp "$build_dir/backend.tar.gz" "$bundle_uri" --only-show-errors
 echo "Uploaded $(tr -cd '\0' < "$build_dir/files" | wc -c) files to $bundle_uri"
 
+echo "== Building the frontend"
+# The React app (../frontend) is built here and shipped as plain files; the box has no Node.
+(cd ../frontend && npm ci --silent && npm run build)
+tar -czf "$build_dir/site.tar.gz" -C ../frontend/dist .
+site_uri="s3://data-jockey-clean-${account_id}/code/web/site.tar.gz"
+"${AWS[@]}" s3 cp "$build_dir/site.tar.gz" "$site_uri" --only-show-errors
+
 echo "== Deploying the $STACK stack"
 sam deploy
 
@@ -60,11 +68,11 @@ done
 
 echo "== Running deploy/setup.sh on $instance_id"
 # The AWS CLI isn't on Ubuntu's AMI; the snap is AWS's own build.
-python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$public_ip" "$REGION" <<'EOF'
+python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$public_ip" "$REGION" "$site_uri" <<'EOF'
 import json
 import sys
 
-path, bundle_uri, snapshot_uri, public_ip, region = sys.argv[1:]
+path, bundle_uri, snapshot_uri, public_ip, region, site_uri = sys.argv[1:]
 commands = [
   "set -eu",
   "[ -x /snap/bin/aws ] || snap install aws-cli --classic",
@@ -72,6 +80,9 @@ commands = [
   f"/snap/bin/aws s3 cp {bundle_uri} $work/backend.tar.gz --region {region} --only-show-errors",
   "mkdir $work/backend",
   "tar -xzf $work/backend.tar.gz -C $work/backend",
+  f"/snap/bin/aws s3 cp {site_uri} $work/site.tar.gz --region {region} --only-show-errors",
+  "mkdir $work/backend/site",
+  "tar -xzf $work/site.tar.gz -C $work/backend/site",
   f"bash $work/backend/deploy/setup.sh $work/backend {snapshot_uri} {public_ip}",
   "rm -rf $work",
 ]
@@ -104,4 +115,4 @@ if [ "$status" != "Success" ]; then
   exit 1
 fi
 
-echo "== Deployed: http://$public_ip/api/v1/"
+echo "== Deployed: http://$public_ip/"
