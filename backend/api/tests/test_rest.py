@@ -1,5 +1,10 @@
+from unittest import mock
+
+from django.core.cache import cache
 from django.db import connections
 from django.test.utils import CaptureQueriesContext
+from rest_framework.settings import api_settings
+from rest_framework.throttling import AnonRateThrottle
 
 from api.graphql.schema import schema
 from racing import models
@@ -11,6 +16,10 @@ DAY = RACE_DAY.isoformat()
 
 
 class ApiTestCase(SnapshotTestCase):
+  def setUp(self):
+    # The rate limit's counters live in the cache: start every test with none.
+    cache.clear()
+
   def get(self, path, status=200, **headers):
     response = self.client.get(f"{API}{path}", HTTP_ACCEPT="application/json", **headers)
     self.assertEqual(response.status_code, status, response.content)
@@ -181,3 +190,34 @@ class HttpTests(ApiTestCase):
     schema_response = self.client.get(f"{API}/schema/", HTTP_ACCEPT="application/vnd.oai.openapi+json")
     self.assertEqual(schema_response.status_code, 200)
     self.assertIn(f"{API}/meetings/", schema_response.json()["paths"])
+
+
+class RateLimitTests(ApiTestCase):
+  def limited_to(self, rate):
+    # DRF reads the rate once, at import, so patch the throttle class itself.
+    return mock.patch.object(AnonRateThrottle, "THROTTLE_RATES", {"anon": rate})
+
+  def test_over_the_limit_is_429_with_retry_after(self):
+    with self.limited_to("2/min"):
+      self.get("/courses/")
+      self.get("/courses/")
+      response = self.get("/courses/", status=429)
+    self.assertIn("Retry-After", response)
+    self.assertNotIn("ETag", response)
+
+  def test_counted_per_ip(self):
+    with self.limited_to("1/min"):
+      self.get("/courses/", REMOTE_ADDR="10.0.0.1")
+      self.get("/courses/", status=429, REMOTE_ADDR="10.0.0.1")
+      self.get("/courses/", REMOTE_ADDR="10.0.0.2")
+
+  def test_forwarded_for_is_ignored_without_a_proxy(self):
+    with self.limited_to("1/min"):
+      self.get("/courses/", HTTP_X_FORWARDED_FOR="1.1.1.1")
+      self.get("/courses/", status=429, HTTP_X_FORWARDED_FOR="2.2.2.2")
+
+  def test_behind_one_proxy_the_forwarded_client_is_counted(self):
+    with self.limited_to("1/min"), mock.patch.object(api_settings, "NUM_PROXIES", 1):
+      self.get("/courses/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="1.1.1.1")
+      self.get("/courses/", REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="2.2.2.2")
+      self.get("/courses/", status=429, REMOTE_ADDR="127.0.0.1", HTTP_X_FORWARDED_FOR="1.1.1.1")

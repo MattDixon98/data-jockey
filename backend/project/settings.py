@@ -125,6 +125,17 @@ STRAWBERRY_DJANGO = {
 # for a new snapshot every 15 minutes.
 API_CACHE_MAX_AGE = 300
 
+# Per-IP rate limit on the REST API (DRF AnonRateThrottle). The counters live in
+# Django's cache: none is configured, so the default per-process memory cache,
+# which means each gunicorn worker counts separately (the real limit is this x
+# the worker count). Fine for one small server; a shared cache would make it exact.
+API_RATE_LIMIT = "60/min"
+# How many proxies sit in front of Django. Behind Caddy every request comes from
+# 127.0.0.1, so the client's IP has to be read from X-Forwarded-For (set this to 1
+# on the server). 0 (local, no proxy) uses the connection's own address and
+# ignores X-Forwarded-For, which a client could fake.
+API_NUM_PROXIES = int(os.environ.get("DJANGO_NUM_PROXIES", "0"))
+
 REST_FRAMEWORK = {
   "DEFAULT_AUTHENTICATION_CLASSES": [],
   "DEFAULT_PERMISSION_CLASSES": ["rest_framework.permissions.AllowAny"],
@@ -136,6 +147,9 @@ REST_FRAMEWORK = {
   "DEFAULT_FILTER_BACKENDS": ["django_filters.rest_framework.DjangoFilterBackend"],
   "DEFAULT_SCHEMA_CLASS": "drf_spectacular.openapi.AutoSchema",
   "EXCEPTION_HANDLER": "api.rest.views.exception_handler",
+  "DEFAULT_THROTTLE_CLASSES": ["rest_framework.throttling.AnonRateThrottle"],
+  "DEFAULT_THROTTLE_RATES": {"anon": API_RATE_LIMIT},
+  "NUM_PROXIES": API_NUM_PROXIES,
 }
 
 SPECTACULAR_SETTINGS = {
@@ -143,7 +157,9 @@ SPECTACULAR_SETTINGS = {
   "DESCRIPTION": (
     "UK/IRE horse racing: racecards, results, prices at each crawl, our own fair win odds and "
     "the undervalued flags, and the model's track record. Read-only; the data is rebuilt once a day. "
-    "The same data is available as GraphQL at /graphql/."
+    "The same data is available as GraphQL at /graphql/. "
+    f"Rate limited per IP address ({API_RATE_LIMIT}): over that, 429 Too Many Requests with a "
+    "Retry-After header."
   ),
   "VERSION": "1",
   "SERVE_INCLUDE_SCHEMA": False,
