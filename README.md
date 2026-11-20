@@ -69,7 +69,8 @@ based on past performance.
 - `model/`: monthly model training (Glue Python shell job), its `data_jockey_model` package, tests, AWS SAM
   template and [model_description.md](model/model_description.md)
 - `backend/`: Django project: read-only models over the daily SQLite file, the command that fetches new ones,
-  the REST and GraphQL APIs (`api/`) and their tests
+  the REST and GraphQL APIs (`api/`) and their tests, plus the web server's AWS SAM template and its setup
+  (`deploy/`: Caddy, gunicorn and systemd)
 - `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
   dependency order
 
