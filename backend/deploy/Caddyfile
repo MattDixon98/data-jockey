@@ -9,12 +9,19 @@
 # value the client sent; Django reads it with DJANGO_NUM_PROXIES=1.
 #
 # The React app (built by scripts/deploy.sh, unpacked to ./site) is served from
-# here as static files; only the APIs and the admin go to Django. Unknown paths
+# here as static files; only the APIs and the admin go to Django (and /static/ comes from collectstatic). Unknown paths
 # get index.html so React Router can handle them (/races/123, /scorecard).
 :80 {
   encode zstd gzip
 
-  @django path /api/* /graphql* /admin/* /static/*
+  @django path /api/* /graphql* /admin/*
+  # collectstatic's output (admin and browsable API CSS/JS), straight from disk.
+  handle /static/* {
+    root * /opt/data-jockey/backend/staticfiles
+    uri strip_prefix /static
+    file_server
+  }
+
   handle @django {
     reverse_proxy 127.0.0.1:8000
   }

@@ -9,6 +9,7 @@ venv/
 # Django
 *.log
 /staticfiles/
+backend/staticfiles/
 /media/
 
 # Node / TypeScript

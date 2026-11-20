@@ -79,6 +79,7 @@ mkdir -p "$CODE_DIR/data"
 rsync -a --delete \
   --exclude /data/ \
   --exclude /db.sqlite3 \
+  --exclude /staticfiles/ \
   --exclude /.env \
   --exclude __pycache__/ \
   "$SRC"/ "$CODE_DIR"/
@@ -117,6 +118,7 @@ mv "$ENV_FILE.tmp" "$ENV_FILE"
 echo "== Django"
 # Only the default database (sessions, admin); the router keeps migrations off the snapshot.
 sudo -u "$APP_USER" sh -c "set -a; . '$ENV_FILE'; cd '$CODE_DIR'; '$VENV/bin/python' manage.py migrate --noinput"
+sudo -u "$APP_USER" sh -c "set -a; . '$ENV_FILE'; cd '$CODE_DIR'; '$VENV/bin/python' manage.py collectstatic --noinput --clear"
 
 echo "== Services"
 cp "$CODE_DIR"/deploy/systemd/*.service "$CODE_DIR"/deploy/systemd/*.timer /etc/systemd/system/
