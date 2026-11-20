@@ -1,7 +1,15 @@
 import { Link, useParams } from "react-router-dom";
 
 import { useRace } from "../api";
-import { OurOdds, Status, ValueBadge } from "../components";
+import {
+  FavouriteBadge,
+  isOurFavourite,
+  marketFavourites,
+  OurFavouriteBadge,
+  OurOdds,
+  Status,
+  ValueBadge,
+} from "../components";
 import { longDate, ordinal, percent, raceTypeLabel } from "../format";
 import { type SortKeys, useSortable } from "../sort";
 import type { Runner } from "../types";
@@ -22,6 +30,7 @@ export default function RacePage() {
   const race = query.data;
   const done = race?.result_status === "complete";
   const { rows: runners, header } = useSortable(race?.runners ?? [], RUNNER_SORT);
+  const favourites = marketFavourites(race?.runners ?? []);
 
   return (
     <Status query={query}>
@@ -66,7 +75,9 @@ export default function RacePage() {
                     <td className="num">{runner.cloth_number}</td>
                     <td>
                       {runner.horse.name}
-                      {runner.status !== "RUNNER" && <span className="tag">non-runner</span>} <ValueBadge runner={runner} />
+                      {runner.status !== "RUNNER" && <span className="tag">non-runner</span>}{" "}
+                      {favourites.has(runner.ride_id) && <FavouriteBadge />}{" "}
+                      {isOurFavourite(runner) && <OurFavouriteBadge />} <ValueBadge runner={runner} />
                       <div className="muted small">
                         {[runner.horse_age ? `${runner.horse_age}yo` : null, runner.weight, runner.official_rating ? `OR ${runner.official_rating}` : null]
                           .filter(Boolean)

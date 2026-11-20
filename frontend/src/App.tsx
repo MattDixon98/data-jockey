@@ -1,6 +1,8 @@
 import { Link, NavLink, Route, Routes } from "react-router-dom";
 
 import { useSnapshotInfo } from "./api";
+// Trimmed and scaled (2x for high-DPI screens) from assets/data_jockey_logo.png.
+import logo from "./assets/logo.png";
 import Home from "./pages/Home";
 import RacePage from "./pages/RacePage";
 import Scorecard from "./pages/Scorecard";
@@ -23,7 +25,7 @@ export default function App() {
     <>
       <header>
         <Link to="/" className="brand">
-          Data Jockey
+          <img src={logo} alt="Data Jockey" width={216} height={67} />
         </Link>
         <nav>
           <NavLink to="/" end>

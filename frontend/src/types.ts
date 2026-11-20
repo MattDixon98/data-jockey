@@ -38,6 +38,8 @@ export interface Runner {
   official_rating: number | null;
   odds: string | null;
   odds_decimal: number | null;
+  /** SP favourite, past races only: f (favourite), j (joint), c (co-favourite). */
+  favourite: string | null;
   model_odds: ModelOdds | null;
   model_value: ModelValue | null;
 }

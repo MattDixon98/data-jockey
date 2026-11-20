@@ -7,6 +7,10 @@
   --accent: #1f6b46;
   --badge-bg: #dff3e7;
   --badge-text: #14532d;
+  --fav-bg: #fde4ef;
+  --fav-text: #9d174d;
+  --ours-bg: #fef3c7;
+  --ours-text: #92400e;
   --error: #b42318;
 }
 
@@ -20,6 +24,10 @@
     --accent: #5fc58f;
     --badge-bg: #1d3a2a;
     --badge-text: #9be3bb;
+    --fav-bg: #3d1a2b;
+    --fav-text: #f9a8d4;
+    --ours-bg: #3a2c0c;
+    --ours-text: #fcd34d;
     --error: #ff8a80;
   }
 }
@@ -36,17 +44,22 @@ body {
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 
+/* Logo centred (equal side columns), nav on the right. */
 header {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: 16px;
   padding: 12px 16px;
   background: var(--panel);
   border-bottom: 1px solid var(--line);
 }
-.brand { font-weight: 700; font-size: 1.2rem; color: var(--text); }
-nav { display: flex; gap: 16px; }
+.brand { display: flex; grid-column: 2; }
+.brand img { display: block; height: 67px; width: auto; }
+@media (max-width: 600px) {
+  .brand img { height: 48px; }
+}
+nav { display: flex; gap: 16px; justify-self: end; }
 nav a { color: var(--muted); }
 nav a.active { color: var(--text); font-weight: 600; }
 
@@ -56,8 +69,16 @@ footer { color: var(--muted); font-size: 0.85rem; }
 h1 { font-size: 1.5rem; margin: 0.4em 0; }
 h2 { font-size: 1.15rem; margin: 0 0 0.3em; }
 
-.daybar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.daybar h1 { flex: 1; margin: 0; min-width: 12ch; }
+/* Arrows at the panels' edges, the date centred between them (equal side columns). */
+.daybar {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 12px;
+}
+.daybar > button { justify-self: start; }
+.daybar h1 { margin: 0; text-align: center; }
+.daybar-end { justify-self: end; display: flex; gap: 8px; }
 button {
   font: inherit;
   color: var(--text);
@@ -96,6 +117,35 @@ th button.sort:hover { color: var(--text); }
 .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
 button:disabled { opacity: 0.4; cursor: default; }
 
+.course-filter {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 24px 0 8px;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.course-filter select {
+  font-weight: 600;
+  min-width: min(280px, 70vw);
+  padding: 10px 16px;
+  border-radius: 8px;
+  cursor: pointer;
+}
+/* The open list: lighter and smaller than the chosen course shown in the box. */
+.course-filter option { font-weight: 400; font-size: 1rem; }
+.course-filter select:focus-visible { outline: 3px solid var(--badge-bg); outline-offset: 2px; }
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 .error { color: var(--error); }
@@ -109,6 +159,8 @@ button:disabled { opacity: 0.4; cursor: default; }
   vertical-align: middle;
 }
 .badge { background: var(--badge-bg); color: var(--badge-text); }
+.badge.favourite { background: var(--fav-bg); color: var(--fav-text); }
+.badge.ours { background: var(--ours-bg); color: var(--ours-text); }
 .tag { border: 1px solid var(--line); color: var(--muted); font-weight: 400; margin-left: 6px; }
 
 @media (max-width: 600px) {

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { useMeetings, useUndervalued } from "../api";
-import { OurOdds, RaceLink, Status, ValueBadge } from "../components";
+import { isOurFavourite, OurOdds, RaceLink, Status, ValueBadge } from "../components";
 import { addDays, longDate, ordinal, raceTypeLabel, todayUk } from "../format";
 import { type SortKeys, useSortable } from "../sort";
 import type { Meeting, Pick } from "../types";
@@ -21,13 +21,26 @@ const PICK_SORT: SortKeys<Pick> = {
   ours: (pick) => pick.model_odds?.model_odds_decimal,
 };
 
-/** The day's undervalued runners, a page at a time: biggest gap between our
- * chance and the market's first, unless a column header says otherwise (a sort
- * covers the whole day, not just the page). */
-function TopPicks({ date }: { date: string }) {
+/** Undervalued and our favourite: the horse we rate most likely to win its race. */
+const isOurPick = (pick: Pick): boolean => isOurFavourite(pick);
+
+interface PicksTableProps {
+  date: string;
+  title: string;
+  description: React.ReactNode;
+  empty: string;
+  include?: (pick: Pick) => boolean;
+}
+
+/** A day's undervalued runners (all of them, or those `include` keeps), a page
+ * at a time: biggest gap between our chance and the market's first, unless a
+ * column header says otherwise (a sort covers the whole day, not just the page).
+ * Both tables share one /undervalued/ request (same query key). */
+function PicksTable({ date, title, description, empty, include }: PicksTableProps) {
   const query = useUndervalued(date);
   const [page, setPage] = useState(0);
-  const ranked = [...(query.data ?? [])].sort((a, b) => gap(b) - gap(a));
+  const kept = include ? (query.data ?? []).filter(include) : (query.data ?? []);
+  const ranked = [...kept].sort((a, b) => gap(b) - gap(a));
   const { rows: all, header } = useSortable(ranked, PICK_SORT, () => setPage(0));
   const first = page * PAGE_SIZE;
   const picks = all.slice(first, first + PAGE_SIZE);
@@ -36,11 +49,10 @@ function TopPicks({ date }: { date: string }) {
   return (
     <section className="panel">
       <h2>
-        Top undervalued horses <span className="tag">experimental</span>
+        {title} <span className="tag">experimental</span>
       </h2>
       <p className="muted small">
-        Where our model rates a horse's chance highest above the market's. So far these{" "}
-        <Link to="/scorecard">haven't beaten the market</Link>.
+        {description} So far these <Link to="/scorecard">haven't beaten the market</Link>.
       </p>
       <Status query={query}>
         {picks.length ? (
@@ -78,7 +90,7 @@ function TopPicks({ date }: { date: string }) {
             </tbody>
           </table>
         ) : (
-          <p>No undervalued horses on this day.</p>
+          <p>{empty}</p>
         )}
         {pages > 1 && (
           <div className="pager">
@@ -152,7 +164,22 @@ export default function Home() {
   const today = todayUk();
   const date = params.get("date") ?? today;
   const meetings = useMeetings(date);
+  // Changing day drops the course filter: that course may not race on the new day.
   const go = (to: string) => setParams(to === today ? {} : { date: to });
+
+  // One course at a time. The choice lives in the URL (?course=Ascot) so it
+  // survives a refresh and the back button; with none chosen, or one not racing
+  // that day, it's the first course in the list.
+  const courses = (meetings.data ?? []).map((meeting) => meeting.course?.name ?? "").filter(Boolean);
+  const wanted = params.get("course");
+  const course = wanted && courses.includes(wanted) ? wanted : courses[0];
+  const shown = (meetings.data ?? []).filter((meeting) => meeting.course?.name === course);
+  const pickCourse = (name: string) =>
+    setParams((current) => {
+      const next = new URLSearchParams(current);
+      next.set("course", name);
+      return next;
+    });
 
   return (
     <>
@@ -161,16 +188,39 @@ export default function Home() {
           ←
         </button>
         <h1>{longDate(date)}</h1>
-        <button onClick={() => go(addDays(date, 1))} aria-label="Next day">
-          →
-        </button>
-        {date !== today && <button onClick={() => go(today)}>Today</button>}
+        <div className="daybar-end">
+          {date !== today && <button onClick={() => go(today)}>Today</button>}
+          <button onClick={() => go(addDays(date, 1))} aria-label="Next day">
+            →
+          </button>
+        </div>
       </div>
       {/* Keyed by date so a new day starts back on page 1. */}
-      <TopPicks key={date} date={date} />
+      <PicksTable
+        key={`picks-${date}`}
+        date={date}
+        title="Our Top Picks"
+        description="Undervalued horses we also rate most likely to win their race."
+        empty="No picks on this day."
+        include={isOurPick}
+      />
       <Status query={meetings}>
         {meetings.data?.length ? (
-          meetings.data.map((meeting) => <MeetingCard key={meeting.meeting_id} meeting={meeting} />)
+          <>
+            <label className="course-filter">
+              Course{" "}
+              <select value={course} onChange={(event) => pickCourse(event.target.value)}>
+                {courses.map((name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {shown.map((meeting) => (
+              <MeetingCard key={meeting.meeting_id} meeting={meeting} />
+            ))}
+          </>
         ) : (
           <p>No UK or Irish racing on this day.</p>
         )}

@@ -21,6 +21,36 @@ export function ValueBadge({ runner }: { runner: Runner }) {
   );
 }
 
+/**
+ * The market favourite(s) of a race, by ride id. Once a race has run the
+ * source marks the SP favourite (joint and co-favourites too); before that it's
+ * the shortest price on the card, ties all counting. Non-runners never are.
+ */
+export function marketFavourites(runners: Runner[]): Set<number> {
+  const running = runners.filter((runner) => runner.status === "RUNNER");
+  const marked = running.filter((runner) => runner.favourite);
+  if (marked.length) return new Set(marked.map((runner) => runner.ride_id));
+  const prices = running.map((runner) => runner.odds_decimal).filter((price): price is number => price !== null);
+  if (!prices.length) return new Set();
+  const shortest = Math.min(...prices);
+  return new Set(running.filter((runner) => runner.odds_decimal === shortest).map((runner) => runner.ride_id));
+}
+
+export const FavouriteBadge = () => (
+  <span className="badge favourite" title="The market's favourite: the shortest price in the race">
+    ❤️ Favourite
+  </span>
+);
+
+/** Our model's favourite: the runner it rates most likely to win (rank 1). */
+export const isOurFavourite = (runner: Runner): boolean => runner.model_odds?.model_rank === 1;
+
+export const OurFavouriteBadge = () => (
+  <span className="badge ours" title="Our favourite: the horse our model rates most likely to win">
+    ⭐ Our favourite
+  </span>
+);
+
 /** Our price and chance for a runner, or a dash if it isn't priced. */
 export function OurOdds({ runner }: { runner: Runner }) {
   const odds = runner.model_odds;
