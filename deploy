@@ -7,6 +7,9 @@
 #   ./deploy web         website server + code       (backend/scripts/deploy.sh)
 #   ./deploy all         all four, in that order
 #
+#   ./deploy web-kill    delete the web stack: server down, no cost (backend/scripts/server.sh)
+#   ./deploy web-start   bring it back, same as `./deploy web` (new IP)
+#
 # Each subproject keeps its own deploy; this only runs it from the right
 # directory. `all` goes in dependency order: the crawler stack owns the raw
 # bucket the Glue stack reads, and the Glue stack owns the clean bucket the
@@ -17,7 +20,7 @@ ROOT="$(cd "$(dirname "$0")" && pwd)"
 TARGETS=(crawlers glue model web)
 
 usage() {
-  sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -35,6 +38,10 @@ deploy() {
 if [ $# -ne 1 ]; then
   usage
 fi
+case "$1" in
+  web-kill) exec "$ROOT/backend/scripts/server.sh" kill ;;
+  web-start) exec "$0" web ;;
+esac
 if [ "$1" != "all" ] && [[ ! " ${TARGETS[*]} " =~ " $1 " ]]; then
   echo "Unknown target: $1" >&2
   usage

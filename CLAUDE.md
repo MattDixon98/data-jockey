@@ -18,6 +18,8 @@ the subproject directory.
 
 From the repo root, `./deploy crawlers|glue|model|web|all` runs a subproject's own deploy (`all` in that
 order: each stack uses a bucket the one before it creates).
+`./deploy web-kill` deletes the web stack (`backend/scripts/server.sh`: server down, no cost); `./deploy web-start`
+(= `./deploy web`) builds it again from scratch, on a new IP.
 
 ### crawlers/
 ```bash
