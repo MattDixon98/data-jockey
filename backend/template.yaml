@@ -26,7 +26,8 @@ Resources:
     Properties:
       GroupDescription: data-jockey web server, HTTP and HTTPS only (no SSH, shell via SSM)
       SecurityGroupIngress:
-        - Description: HTTP (and Let's Encrypt's HTTP challenge)
+        # EC2 rejects some characters in rule descriptions, apostrophes included.
+        - Description: HTTP (and the ACME HTTP challenge for the HTTPS certificate)
           IpProtocol: tcp
           FromPort: 80
           ToPort: 80
