@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { useMeetings, useUndervalued } from "../api";
@@ -6,7 +7,7 @@ import { addDays, longDate, ordinal, raceTypeLabel, todayUk } from "../format";
 import { type SortKeys, useSortable } from "../sort";
 import type { Meeting, Pick } from "../types";
 
-const TOP_PICKS = 10;
+const PAGE_SIZE = 10;
 
 /** How far our chance is above the market's, in percentage points. Ranking by
  * the API's `edge` (relative: ours / market's - 1) puts 100/1 outsiders first. */
@@ -20,11 +21,17 @@ const PICK_SORT: SortKeys<Pick> = {
   ours: (pick) => pick.model_odds?.model_odds_decimal,
 };
 
-/** The day's most undervalued runners: biggest gap between our chance and the market's first. */
+/** The day's undervalued runners, a page at a time: biggest gap between our
+ * chance and the market's first, unless a column header says otherwise (a sort
+ * covers the whole day, not just the page). */
 function TopPicks({ date }: { date: string }) {
   const query = useUndervalued(date);
-  const top = [...(query.data ?? [])].sort((a, b) => gap(b) - gap(a)).slice(0, TOP_PICKS);
-  const { rows: picks, header } = useSortable(top, PICK_SORT);
+  const [page, setPage] = useState(0);
+  const ranked = [...(query.data ?? [])].sort((a, b) => gap(b) - gap(a));
+  const { rows: all, header } = useSortable(ranked, PICK_SORT, () => setPage(0));
+  const first = page * PAGE_SIZE;
+  const picks = all.slice(first, first + PAGE_SIZE);
+  const pages = Math.ceil(all.length / PAGE_SIZE);
 
   return (
     <section className="panel">
@@ -72,6 +79,19 @@ function TopPicks({ date }: { date: string }) {
           </table>
         ) : (
           <p>No undervalued horses on this day.</p>
+        )}
+        {pages > 1 && (
+          <div className="pager">
+            <button type="button" onClick={() => setPage(page - 1)} disabled={page === 0}>
+              ← Previous
+            </button>
+            <span className="muted small">
+              {first + 1}–{first + picks.length} of {all.length}
+            </span>
+            <button type="button" onClick={() => setPage(page + 1)} disabled={page >= pages - 1}>
+              Next →
+            </button>
+          </div>
         )}
       </Status>
     </section>
@@ -146,7 +166,8 @@ export default function Home() {
         </button>
         {date !== today && <button onClick={() => go(today)}>Today</button>}
       </div>
-      <TopPicks date={date} />
+      {/* Keyed by date so a new day starts back on page 1. */}
+      <TopPicks key={date} date={date} />
       <Status query={meetings}>
         {meetings.data?.length ? (
           meetings.data.map((meeting) => <MeetingCard key={meeting.meeting_id} meeting={meeting} />)

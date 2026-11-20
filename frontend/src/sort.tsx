@@ -23,20 +23,23 @@ function compare(a: SortValue, b: SortValue, descending: boolean): number {
  * Click-to-sort columns. Clicking a header sorts by it ascending, again
  * descending, a third time back to the rows' own order. Returns the rows in
  * the chosen order and a `header()` that renders a clickable <th>.
+ * `onChange` runs on every click (e.g. a paged table going back to page 1).
  */
-export function useSortable<T>(rows: T[], keys: SortKeys<T>) {
+export function useSortable<T>(rows: T[], keys: SortKeys<T>, onChange?: () => void) {
   const [sort, setSort] = useState<Sort | null>(null);
 
   const sorted = sort
     ? [...rows].sort((a, b) => compare(keys[sort.key](a), keys[sort.key](b), sort.descending))
     : rows;
 
-  const toggle = (key: string) =>
+  const toggle = (key: string) => {
+    onChange?.();
     setSort((current) => {
       if (current?.key !== key) return { key, descending: false };
       if (!current.descending) return { key, descending: true };
       return null;
     });
+  };
 
   const header = (key: string, label: string, className?: string) => {
     const active = sort?.key === key;

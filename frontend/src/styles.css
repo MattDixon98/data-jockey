@@ -93,6 +93,9 @@ th button.sort {
 th button.sort:hover { color: var(--text); }
 .gone { opacity: 0.5; }
 
+.pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+button:disabled { opacity: 0.4; cursor: default; }
+
 .muted { color: var(--muted); }
 .small { font-size: 0.85rem; }
 .error { color: var(--error); }
