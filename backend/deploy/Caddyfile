@@ -1,0 +1,13 @@
+# Caddy in front of gunicorn (deploy/systemd/data-jockey-web.service).
+# Copied to /etc/caddy/Caddyfile by deploy/setup.sh.
+#
+# Plain HTTP on the Elastic IP for now. Once the domain points here, replace
+# ":80" with the domain name and Caddy gets and renews a Let's Encrypt
+# certificate by itself (and redirects HTTP to HTTPS).
+#
+# reverse_proxy sets X-Forwarded-For to the real client address, replacing any
+# value the client sent; Django reads it with DJANGO_NUM_PROXIES=1.
+:80 {
+  encode zstd gzip
+  reverse_proxy 127.0.0.1:8000
+}
