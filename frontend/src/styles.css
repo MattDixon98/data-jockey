@@ -1,35 +1,20 @@
+/* One theme, dark green, whatever the device's light/dark setting. color-scheme
+   makes the browser's own parts (date picker, scrollbars, form controls) dark too. */
 :root {
-  --bg: #f7f7f4;
-  --panel: #ffffff;
-  --text: #1c2420;
-  --muted: #667069;
-  --line: #e2e4de;
-  --accent: #1f6b46;
-  --badge-bg: #dff3e7;
-  --badge-text: #14532d;
-  --fav-bg: #fde4ef;
-  --fav-text: #9d174d;
-  --ours-bg: #fef3c7;
-  --ours-text: #92400e;
-  --error: #b42318;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #131815;
-    --panel: #1b221e;
-    --text: #e8ece9;
-    --muted: #9aa59d;
-    --line: #2c352f;
-    --accent: #5fc58f;
-    --badge-bg: #1d3a2a;
-    --badge-text: #9be3bb;
-    --fav-bg: #3d1a2b;
-    --fav-text: #f9a8d4;
-    --ours-bg: #3a2c0c;
-    --ours-text: #fcd34d;
-    --error: #ff8a80;
-  }
+  color-scheme: dark;
+  --bg: #131815;
+  --panel: #1b221e;
+  --text: #e8ece9;
+  --muted: #9aa59d;
+  --line: #2c352f;
+  --accent: #5fc58f;
+  --badge-bg: #1d3a2a;
+  --badge-text: #9be3bb;
+  --fav-bg: #3d1a2b;
+  --fav-text: #f9a8d4;
+  --ours-bg: #3a2c0c;
+  --ours-text: #fcd34d;
+  --error: #ff8a80;
 }
 
 * { box-sizing: border-box; }
