@@ -205,5 +205,6 @@ Outputs:
     Description: Elastic IP, where the site is served (and the domain's A record points)
     Value: !Ref ElasticIp
   SiteUrl:
-    Description: The site, over plain HTTP until the domain is set up
-    Value: !Sub http://${ElasticIp}/
+    # Caddy serves only the domain (deploy/Caddyfile); its A records must point at PublicIp.
+    Description: The site (HTTPS once the domain's A records point at PublicIp)
+    Value: https://mattdixon.uk/
