@@ -69,8 +69,13 @@ const shortDate = (day: string): string =>
   new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
 const WIDTH = 640;
-const HEIGHT = 260;
-const MARGIN = { top: 12, right: 12, bottom: 28, left: 52 };
+const PLOT_HEIGHT = 220;
+const MARGIN = { top: 12, right: 12, left: 52 };
+// Every day gets a date label: level while each has this much room, slanted when they'd collide
+// (the slanted ones need a taller bottom margin).
+const LEVEL_LABEL_WIDTH = 44;
+const LEVEL_BOTTOM = 28;
+const SLANTED_BOTTOM = 48;
 
 export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulative: boolean }) {
   // The hovered day stays set after the pointer leaves, so the cursor and tooltip
@@ -90,7 +95,10 @@ export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulativ
   const tMin = times[0];
   const tSpan = times[times.length - 1] - tMin || 1;
   const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
-  const plotHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
+  const plotHeight = PLOT_HEIGHT;
+  const slanted = points.length > 1 && plotWidth / (points.length - 1) < LEVEL_LABEL_WIDTH;
+  const HEIGHT = MARGIN.top + plotHeight + (slanted ? SLANTED_BOTTOM : LEVEL_BOTTOM);
+  const axisY = MARGIN.top + plotHeight;
   const x = (i: number) => MARGIN.left + (points.length > 1 ? ((times[i] - tMin) / tSpan) * plotWidth : plotWidth / 2);
   const y = (value: number) => MARGIN.top + ((yMax - value) / (yMax - yMin || 1)) * plotHeight;
 
@@ -159,14 +167,23 @@ export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulativ
               </text>
             </g>
           ))}
-          <text x={MARGIN.left} y={HEIGHT - 8} textAnchor="start">
-            {shortDate(points[0].day)}
-          </text>
-          {points.length > 1 && (
-            <text x={WIDTH - MARGIN.right} y={HEIGHT - 8} textAnchor="end">
-              {shortDate(latest.day)}
-            </text>
-          )}
+          {points.map((point, i) => {
+            const level = slanted ? null : i === 0 && points.length > 1 ? "start" : i === points.length - 1 && i > 0 ? "end" : "middle";
+            return (
+              <g key={point.day}>
+                <line x1={x(i)} x2={x(i)} y1={axisY} y2={axisY + 4} className="axis" />
+                {level ? (
+                  <text x={x(i)} y={axisY + 18} textAnchor={level}>
+                    {shortDate(point.day)}
+                  </text>
+                ) : (
+                  <text x={x(i)} y={axisY + 10} dy="0.32em" textAnchor="end" transform={`rotate(-45 ${x(i)} ${axisY + 10})`}>
+                    {shortDate(point.day)}
+                  </text>
+                )}
+              </g>
+            );
+          })}
           <line
             y1={MARGIN.top}
             y2={MARGIN.top + plotHeight}

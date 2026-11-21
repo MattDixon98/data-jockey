@@ -21,6 +21,8 @@ STACK=data-jockey-web
 # Also in deploy/Caddyfile.
 SITE_DOMAIN=mattdixon.uk
 AWS=(aws --profile "$PROFILE" --region "$REGION")
+# No pager: AWS CLI v2 pipes long output (setup.sh's log) into less, which stalls the deploy at a ':' prompt.
+export AWS_PAGER=""
 
 cd "$(dirname "$0")/.."
 
