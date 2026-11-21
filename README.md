@@ -1,5 +1,11 @@
-# Data Jockey
+<p align="center">
+  <img src="frontend/src/assets/logo.png" alt="Data Jockey" width="360">
+</p>
 
+<p align="center"><strong><a href="https://mattdixon.uk">mattdixon.uk</a></strong></p>
+
+# Data Jockey
+https://mattdixon.uk
 Data Jockey is an end-to-end horse racing data platform. It collects UK and Irish
 racing data every day, turns it into clean, queryable tables, and serves it to a
 website that shows today's races, their odds, and which horses look undervalued
@@ -32,10 +38,12 @@ based on past performance.
    per-IP rate limit. A GraphQL API (Strawberry, with depth and size limits) sits
    alongside it on the same query layer, and every list loads in a fixed number
    of SQL queries.
-7. **Website** *(in progress)*: a React single-page app built to static files,
-   reading the REST API. It's served from one EC2 instance (its own SAM stack),
-   with gunicorn behind Caddy, which also serves the React build from the same
-   domain (no CORS) and handles HTTPS automatically.
+7. **Website:** a React single-page app (Vite, TypeScript, React Router, TanStack
+   Query) built to static files, reading the REST API. It's served from one EC2
+   instance (its own SAM stack, set up over SSM with no SSH), with gunicorn behind
+   Caddy, which also serves the React build from the same domain (no CORS) and
+   handles HTTPS automatically. An AWS Budgets action stops the server if monthly
+   spend hits its limit.
 
 ## Tech stack
 
@@ -47,7 +55,7 @@ based on past performance.
 | Modelling      | Python (NumPy, SciPy), AWS Glue Python shell                                                          |
 | Data serving   | SQLite snapshot generated daily from processed tables                                                 |
 | Backend & API  | Python, Django, Django REST Framework, django-filter, drf-spectacular (OpenAPI), GraphQL (Strawberry) |
-| Website        | React, EC2, Caddy, gunicorn (planned)                                                                 |
+| Website        | React, TypeScript, Vite, EC2, Caddy (HTTPS), gunicorn                                                 |
 
 ## Status
 
@@ -57,9 +65,8 @@ based on past performance.
 - ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
 - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
 - ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
-- ✅ REST API (OpenAPI docs, HTTP caching, rate limiting) and a GraphQL API serving the daily data; running
-  locally, not yet deployed
-- 🚧 Website: React frontend and hosting still to build
+- ✅ REST API (OpenAPI docs, HTTP caching, rate limiting) and a GraphQL API serving the daily data
+- ✅ Website live at [mattdixon.uk](https://mattdixon.uk): today's races, our odds and picks, and a track record
 
 ## Repository structure
 
@@ -71,6 +78,7 @@ based on past performance.
 - `backend/`: Django project: read-only models over the daily SQLite file, the command that fetches new ones,
   the REST and GraphQL APIs (`api/`) and their tests, plus the web server's AWS SAM template and its setup
   (`deploy/`: Caddy, gunicorn and systemd)
+- `frontend/`: the React website (Vite, TypeScript), built and shipped by the web deploy
 - `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
   dependency order
 
