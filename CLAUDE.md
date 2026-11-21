@@ -4,7 +4,7 @@ Data Jockey is a UK/Irish horse racing data platform: TypeScript crawlers save r
 JSON to S3, AWS Glue (PySpark) turns it into Iceberg tables, and a Django site will
 serve it. See README.md for the product overview and status.
 
-Four independent subprojects, each with its own tooling. Run commands from inside
+Five independent subprojects, each with its own tooling. Run commands from inside
 the subproject directory.
 
 | Dir         | What                                    | Stack                          | Status        |
@@ -13,6 +13,7 @@ the subproject directory.
 | `glue/`     | Raw JSON → clean Iceberg tables          | PySpark 3.5.4 (Glue 5.0), SAM  | In progress   |
 | `model/`    | Monthly training of the win-odds weights | Python 3.9 (Glue Python shell), numpy/scipy, SAM | In progress |
 | `backend/`  | Website + API                            | Django 5.2, DRF, Strawberry GraphQL; EC2, SAM | REST (main) + GraphQL APIs, server stack in progress |
+| `dashboard/` | Streamlit charts over the REST API       | Streamlit, pandas, requests    | Local only    |
 
 ## Commands
 
@@ -67,6 +68,12 @@ aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-we
 # Caddy serves /static/). Users live in the box's db.sqlite3 (createsuperuser over the shell; gone after web-kill)
 aws ssm start-session --target <InstanceId> --document-name AWS-StartPortForwardingSession \
   --parameters portNumber=8000,localPortNumber=8000 --profile data-jockey --region eu-west-2
+```
+
+### dashboard/
+```bash
+pip install -r requirements.txt   # streamlit, pandas, requests
+streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (default https://mattdixon.uk/api/v1)
 ```
 
 ## Architecture

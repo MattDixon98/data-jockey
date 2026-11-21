@@ -346,6 +346,10 @@ class ScorecardRowSerializer(serializers.ModelSerializer):
       "roi",
       "roi_low",
       "roi_high",
+      "top_pick_profit_model",
+      "top_pick_roi_model",
+      "top_pick_profit_market",
+      "top_pick_roi_market",
     ]
 
 

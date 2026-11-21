@@ -2,7 +2,8 @@
 -- Lower log-loss is better (ours vs the market). For the flags: bets_won vs
 -- expected_wins_market (what SP expected) and wins_z (above ~2 unlikely to be
 -- luck); roi with its 95% range (roi_low..roi_high): while that range spans 0,
--- the picks haven't shown they make or lose money.
+-- the picks haven't shown they make or lose money. top_pick_roi_*: 1 unit per
+-- race on our favourite vs the market's, at SP, for comparison.
 SELECT
   view,
   race_group,
@@ -20,7 +21,9 @@ SELECT
   ROUND(profit_units, 1) AS profit_units,
   ROUND(roi, 3) AS roi,
   ROUND(roi_low, 3) AS roi_low,
-  ROUND(roi_high, 3) AS roi_high
+  ROUND(roi_high, 3) AS roi_high,
+  ROUND(top_pick_roi_model, 3) AS top_pick_roi_model,
+  ROUND(top_pick_roi_market, 3) AS top_pick_roi_market
 FROM data_jockey.model_scorecard
 WHERE period_type = 'all'
 ORDER BY view, race_group;

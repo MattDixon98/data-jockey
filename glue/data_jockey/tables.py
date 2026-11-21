@@ -313,8 +313,8 @@ TABLES: dict[str, str] = {
   "model_scorecard": """
       CREATE TABLE IF NOT EXISTS {db}.model_scorecard (
           view                  STRING  COMMENT 'after_race (vs SP) or site_pick (race-morning row, else t-1)',
-          period_type           STRING  COMMENT 'all, month or model_version',
-          period                STRING  COMMENT 'all, 2026-11, or a model version',
+          period_type           STRING  COMMENT 'all, month, day or model_version',
+          period                STRING  COMMENT 'all, 2026-11, 2026-11-12, or a model version',
           race_group            STRING  COMMENT 'all, flat or jumps',
           first_race            DATE,
           last_race             DATE,
@@ -332,7 +332,11 @@ TABLES: dict[str, str] = {
           profit_units          DOUBLE  COMMENT '1 unit on every bet, settled at SP',
           roi                   DOUBLE  COMMENT 'profit_units / bets',
           roi_low               DOUBLE  COMMENT '95% range on roi (normal approximation)',
-          roi_high              DOUBLE
+          roi_high              DOUBLE,
+          top_pick_profit_model   DOUBLE  COMMENT '1 unit per race on our favourite at SP (joint favourites split it)',
+          top_pick_roi_model      DOUBLE  COMMENT 'top_pick_profit_model per unit staked',
+          top_pick_profit_market  DOUBLE  COMMENT 'The same on the market favourite (SP, or the forecast for site_pick)',
+          top_pick_roi_market     DOUBLE  COMMENT 'top_pick_profit_market per unit staked'
       ) USING iceberg
   """,
   # Calibration, all time: runners grouped by the probability we (or the

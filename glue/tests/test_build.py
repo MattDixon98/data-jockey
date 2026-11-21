@@ -673,6 +673,12 @@ def test_scorecard_numbers_match_the_rows(out_of_sample):
       assert card.profit_units == pytest.approx(profit)
       assert card.roi == pytest.approx(profit / len(bets))
       assert card.expected_wins_market == pytest.approx(sum(r.sp_prob for r in bets))
+    for source in ("model", "market"):
+      picks = [r for r in rows if getattr(r, f"{source}_rank") == 1]
+      stake = 1 / len(picks)
+      pick_profit = sum(stake * (r.sp_decimal - 1) if r.won else -stake for r in picks)
+      assert getattr(card, f"top_pick_profit_{source}") == pytest.approx(pick_profit)
+      assert getattr(card, f"top_pick_roi_{source}") == pytest.approx(pick_profit)  # 1 race = 1 unit
     # SP is the same for both views: site_pick bets are settled at the race's SP too.
     assert all(r.sp_prob is not None for r in rows)
 
@@ -680,7 +686,7 @@ def test_scorecard_numbers_match_the_rows(out_of_sample):
 def test_scorecard_breakdowns(out_of_sample):
   _, graded = out_of_sample
   keys = {(r.period_type, r.period, r.race_group) for r in model_scorecard(graded).collect()}
-  periods = {("all", "all"), ("month", "2026-11"), ("model_version", "2026-11-10")}
+  periods = {("all", "all"), ("month", "2026-11"), ("day", "2026-11-12"), ("model_version", "2026-11-10")}
   groups = {"all", "jumps"}  # 948004 is a hurdle race
   assert keys == {(pt, p, g) for pt, p in periods for g in groups}
 

@@ -291,7 +291,7 @@ class ModelValue(SnapshotModel):
 class ModelScorecard(SnapshotModel):
   pk = models.CompositePrimaryKey("view", "period_type", "period", "race_group")
   view = models.TextField(help_text="after_race (vs SP) or site_pick (the race-morning flags).")
-  period_type = models.TextField(help_text="all, month or model_version.")
+  period_type = models.TextField(help_text="all, month, day or model_version.")
   period = models.TextField()
   race_group = models.TextField(help_text="all, flat or jumps.")
   first_race = models.DateField(null=True)
@@ -311,6 +311,16 @@ class ModelScorecard(SnapshotModel):
   roi = models.FloatField(null=True)
   roi_low = models.FloatField(null=True)
   roi_high = models.FloatField(null=True)
+  top_pick_profit_model = models.FloatField(
+    null=True,
+    help_text="Profit of 1 unit per race on our favourite at SP (joint favourites split the unit).",
+  )
+  top_pick_roi_model = models.FloatField(null=True, help_text="top_pick_profit_model per unit staked.")
+  top_pick_profit_market = models.FloatField(
+    null=True,
+    help_text="The same on the market favourite (SP, or the forecast for site_pick).",
+  )
+  top_pick_roi_market = models.FloatField(null=True, help_text="top_pick_profit_market per unit staked.")
 
   class Meta(SnapshotModel.Meta):
     db_table = "model_scorecard"

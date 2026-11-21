@@ -11,8 +11,13 @@ Profit and "did flagged runners beat the market's expectation" always use
 SP, the final official price a bet is settled at, whichever view flagged
 the runner. A flagged runner that didn't run (won is NULL) is a void bet.
 
+Next to the flags, two simple strategies to measure them against: 1 unit per
+race on our favourite (model_rank 1) and on the market's (market_rank 1, SP
+for after_race, the forecast for site_pick), also settled at SP. Joint
+favourites split the unit, so each strategy stakes exactly 1 unit per race.
+
 model_scorecard has one row per view, period (all time, each month, each
-model version) and race group (all, flat, jumps). With few races the
+day, each model version) and race group (all, flat, jumps). With few races the
 numbers swing a lot by chance, so the flags carry a z-score and a 95% range
 on their return.
 """
@@ -103,10 +108,11 @@ def graded_view_rows(value: DataFrame, races: DataFrame) -> DataFrame:
 
 
 def with_breakdowns(df: DataFrame) -> DataFrame:
-  """Each row once per period (all time, its month, its model version) and race group (all, and its own flat/jumps): six copies, ready to group."""
+  """Each row once per period (all time, its month, its day, its model version) and race group (all, and its own flat/jumps): eight copies, ready to group."""
   periods = array(
     struct(lit("all").alias("period_type"), lit("all").alias("period")),
     struct(lit("month").alias("period_type"), date_format("race_date", "yyyy-MM").alias("period")),
+    struct(lit("day").alias("period_type"), date_format("race_date", "yyyy-MM-dd").alias("period")),
     struct(lit("model_version").alias("period_type"), col("model_version").alias("period")),
   )
   groups = array(lit("all"), col("race_group"))
@@ -116,6 +122,31 @@ def with_breakdowns(df: DataFrame) -> DataFrame:
     col("_period.period_type").alias("period_type"),
     col("_period.period").alias("period"),
   ).drop("_period", "race_group").withColumnRenamed("_group", "race_group")
+
+
+def with_top_pick_stakes(df: DataFrame) -> DataFrame:
+  """Adds _model_pick_stake and _market_pick_stake: 1 unit per race on the
+  favourite, split between joint favourites, NULL for every other runner
+  (and for a favourite with no SP, a void bet)."""
+  view_race = Window.partitionBy("view", "race_id")
+  has_sp = col("sp_decimal").isNotNull()
+  for source in ("model", "market"):
+    is_pick = (col(f"{source}_rank") == 1) & has_sp
+    picks_in_race = spark_sum(is_pick.cast("int")).over(view_race)
+    stake = (
+      when(is_pick, lit(1.0) / picks_in_race)
+      .otherwise(lit(None))
+    )
+    df = df.withColumn(f"_{source}_pick_stake", stake)
+  return df
+
+
+def top_pick_profit(stake: Column) -> Column:
+  """Profit of a top-pick stake at SP: stake x (SP - 1) if it won, else -stake."""
+  return (
+    when(col("won"), stake * (col("sp_decimal") - lit(1.0)))
+    .otherwise(-stake)
+  )
 
 
 def select_scorecard_aggregates() -> list[Column]:
@@ -148,6 +179,10 @@ def select_scorecard_aggregates() -> list[Column]:
     spark_sum(bet_sp_variance).alias("_wins_variance"),
     spark_sum(bet_profit).alias("profit_units"),
     stddev_samp(bet_profit).alias("_profit_spread"),
+    spark_sum("_model_pick_stake").alias("_model_pick_staked"),
+    spark_sum(top_pick_profit(col("_model_pick_stake"))).alias("top_pick_profit_model"),
+    spark_sum("_market_pick_stake").alias("_market_pick_staked"),
+    spark_sum(top_pick_profit(col("_market_pick_stake"))).alias("top_pick_profit_market"),
   ]
 
 
@@ -158,6 +193,8 @@ def select_scorecard_columns() -> list[Column]:
   roi_margin = lit(Z_95) * col("_profit_spread") / spark_sqrt(bets)
   wins_above_expected = col("bets_won") - col("expected_wins_market")
   wins_z = wins_above_expected / spark_sqrt(col("_wins_variance"))
+  top_pick_roi_model = col("top_pick_profit_model") / col("_model_pick_staked")
+  top_pick_roi_market = col("top_pick_profit_market") / col("_market_pick_staked")
 
   return [
     col("view"),
@@ -181,12 +218,16 @@ def select_scorecard_columns() -> list[Column]:
     roi.alias("roi"),
     (roi - roi_margin).alias("roi_low"),
     (roi + roi_margin).alias("roi_high"),
+    col("top_pick_profit_model"),
+    top_pick_roi_model.alias("top_pick_roi_model"),
+    col("top_pick_profit_market"),
+    top_pick_roi_market.alias("top_pick_roi_market"),
   ]
 
 
 def model_scorecard(graded: DataFrame) -> DataFrame:
   """One row per view, period and race group. Takes graded_view_rows()."""
-  df = with_breakdowns(graded)
+  df = with_breakdowns(with_top_pick_stakes(graded))
   df = df.groupBy("view", "period_type", "period", "race_group").agg(*select_scorecard_aggregates())
   return df.select(select_scorecard_columns())
 
