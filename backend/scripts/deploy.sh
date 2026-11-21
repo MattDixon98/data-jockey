@@ -71,11 +71,12 @@ done
 
 echo "== Running deploy/setup.sh on $instance_id"
 # The AWS CLI isn't on Ubuntu's AMI; the snap is AWS's own build.
-python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$SITE_DOMAIN" "$REGION" "$site_uri" <<'EOF'
+python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$SITE_DOMAIN,localhost" "$REGION" "$site_uri" <<'EOF'
 import json
 import sys
 
-# Django only sees the bare domain: Caddy redirects www and drops requests to the IP.
+# Django sees the bare domain through Caddy (which redirects www and drops requests to the IP),
+# and localhost through the SSM tunnel to the admin (Caddy never forwards Host: localhost).
 path, bundle_uri, snapshot_uri, allowed_hosts, region, site_uri = sys.argv[1:]
 commands = [
   "set -eu",

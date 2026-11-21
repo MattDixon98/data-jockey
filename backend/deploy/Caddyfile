@@ -11,12 +11,19 @@
 # value the client sent; Django reads it with DJANGO_NUM_PROXIES=1.
 #
 # The React app (built by scripts/deploy.sh, unpacked to ./site) is served from
-# here as static files; only the APIs and the admin go to Django (and /static/ comes from collectstatic). Unknown paths
+# here as static files; only the APIs go to Django (and /static/ comes from collectstatic). Unknown paths
 # get index.html so React Router can handle them (/races/123, /scorecard).
+#
+# The Django admin is not public: /admin is a 404 here. Reach it through an SSM tunnel
+# straight to gunicorn (http://localhost:8000/admin/, see CLAUDE.md), which skips Caddy.
 mattdixon.uk {
   encode zstd gzip
 
-  @django path /api/* /graphql* /admin/*
+  handle /admin* {
+    respond 404
+  }
+
+  @django path /api/* /graphql*
   # collectstatic's output (admin and browsable API CSS/JS), straight from disk.
   handle /static/* {
     root * /opt/data-jockey/backend/staticfiles

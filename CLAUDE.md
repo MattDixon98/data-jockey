@@ -63,6 +63,10 @@ python manage.py export_schema api.graphql.schema   # print the GraphQL SDL
 python manage.py spectacular --validate --file openapi.yaml   # write + check the REST OpenAPI schema
 ./scripts/deploy.sh               # bundle backend/ to S3, sam deploy, run deploy/setup.sh on the box via SSM
 aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-west-2   # shell on the server (no SSH)
+# Django admin (not public: Caddy 404s /admin): tunnel to gunicorn, then http://localhost:8000/admin/ (unstyled:
+# Caddy serves /static/). Users live in the box's db.sqlite3 (createsuperuser over the shell; gone after web-kill)
+aws ssm start-session --target <InstanceId> --document-name AWS-StartPortForwardingSession \
+  --parameters portNumber=8000,localPortNumber=8000 --profile data-jockey --region eu-west-2
 ```
 
 ## Architecture
