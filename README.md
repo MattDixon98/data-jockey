@@ -2,10 +2,9 @@
   <img src="frontend/src/assets/logo.png" alt="Data Jockey" width="360">
 </p>
 
-<p align="center"><strong><a href="https://mattdixon.uk">mattdixon.uk</a></strong></p>
-
 # Data Jockey
 https://mattdixon.uk
+
 Data Jockey is an end-to-end horse racing data platform. It collects UK and Irish
 racing data every day, turns it into clean, queryable tables, and serves it to a
 website that shows today's races, their odds, and which horses look undervalued
