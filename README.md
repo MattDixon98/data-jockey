@@ -25,7 +25,8 @@ based on past performance.
    course/distance/ground record, jockey and trainer win rates). A model trained
    monthly in a Glue Python shell job (NumPy, SciPy) turns them into our own win
    odds, which are compared with the market's (bookmakers' margin removed) to flag
-   undervalued horses, with a scorecard tracking how those flags perform.
+   undervalued horses. An out-of-sample scorecard grades the flags and backs our
+   favourite against the market's at SP, by month, day and model version.
    See [model/model_description.md](model/model_description.md).
 5. **Serve:** the Glue job exports the UK and Irish data to a single SQLite file
    in S3. A systemd timer on the web server runs a Django management command that
@@ -38,11 +39,14 @@ based on past performance.
    alongside it on the same query layer, and every list loads in a fixed number
    of SQL queries.
 7. **Website:** a React single-page app (Vite, TypeScript, React Router, TanStack
-   Query) built to static files, reading the REST API. It's served from one EC2
+   Query) built to static files, reading the REST API, with a hand-drawn SVG chart
+   of top-pick ROI by day (no chart library). It's served from one EC2
    instance (its own SAM stack, set up over SSM with no SSH), with gunicorn behind
    Caddy, which also serves the React build from the same domain (no CORS) and
    handles HTTPS automatically. An AWS Budgets action stops the server if monthly
    spend hits its limit.
+8. **Dashboard:** a Streamlit app (pandas, requests) charts the same top-pick ROI
+   from the public REST API, daily or cumulative, as a second client of the API.
 
 ## Tech stack
 
@@ -55,6 +59,7 @@ based on past performance.
 | Data serving   | SQLite snapshot generated daily from processed tables                                                 |
 | Backend & API  | Python, Django, Django REST Framework, django-filter, drf-spectacular (OpenAPI), GraphQL (Strawberry) |
 | Website        | React, TypeScript, Vite, EC2, Caddy (HTTPS), gunicorn                                                 |
+| Dashboard      | Streamlit, pandas                                                                                     |
 
 ## Status
 
@@ -62,10 +67,13 @@ based on past performance.
 - ✅ Glue processing into Iceberg tables, rebuilt daily and queryable in Athena
 - ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
 - ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
-- 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
+  and daily top-pick ROI against the market favourite
+  - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
 - ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
 - ✅ REST API (OpenAPI docs, HTTP caching, rate limiting) and a GraphQL API serving the daily data
 - ✅ Website live at [mattdixon.uk](https://mattdixon.uk): today's races, our odds and picks, and a track record
+  with a top-pick ROI chart
+- ✅ Streamlit dashboard of top-pick ROI over the REST API (run locally)
 
 ## Repository structure
 
@@ -78,6 +86,7 @@ based on past performance.
   the REST and GraphQL APIs (`api/`) and their tests, plus the web server's AWS SAM template and its setup
   (`deploy/`: Caddy, gunicorn and systemd)
 - `frontend/`: the React website (Vite, TypeScript), built and shipped by the web deploy
+- `dashboard/`: Streamlit app charting top-pick ROI from the REST API
 - `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
   dependency order
 
