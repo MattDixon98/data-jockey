@@ -291,6 +291,10 @@ class ScorecardRow:
   roi: auto
   roi_low: auto
   roi_high: auto
+  top_pick_profit_model: auto
+  top_pick_roi_model: auto
+  top_pick_profit_market: auto
+  top_pick_roi_market: auto
 
 
 @strawberry_django.type(models.ModelCalibration, description="Predicted vs actual win rate per probability band.")
