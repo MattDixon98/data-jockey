@@ -17,6 +17,9 @@ set -euo pipefail
 PROFILE=data-jockey
 REGION=eu-west-2
 STACK=data-jockey-web
+# The site's domain (Porkbun; A records for it and www point at the Elastic IP).
+# Also in deploy/Caddyfile.
+SITE_DOMAIN=mattdixon.uk
 AWS=(aws --profile "$PROFILE" --region "$REGION")
 
 cd "$(dirname "$0")/.."
@@ -68,11 +71,13 @@ done
 
 echo "== Running deploy/setup.sh on $instance_id"
 # The AWS CLI isn't on Ubuntu's AMI; the snap is AWS's own build.
-python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$public_ip" "$REGION" "$site_uri" <<'EOF'
+python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$SITE_DOMAIN,localhost" "$REGION" "$site_uri" <<'EOF'
 import json
 import sys
 
-path, bundle_uri, snapshot_uri, public_ip, region, site_uri = sys.argv[1:]
+# Django sees the bare domain through Caddy (which redirects www and drops requests to the IP),
+# and localhost through the SSM tunnel to the admin (Caddy never forwards Host: localhost).
+path, bundle_uri, snapshot_uri, allowed_hosts, region, site_uri = sys.argv[1:]
 commands = [
   "set -eu",
   "[ -x /snap/bin/aws ] || snap install aws-cli --classic",
@@ -83,7 +88,7 @@ commands = [
   f"/snap/bin/aws s3 cp {site_uri} $work/site.tar.gz --region {region} --only-show-errors",
   "mkdir $work/backend/site",
   "tar -xzf $work/site.tar.gz -C $work/backend/site",
-  f"bash $work/backend/deploy/setup.sh $work/backend {snapshot_uri} {public_ip}",
+  f"bash $work/backend/deploy/setup.sh $work/backend {snapshot_uri} {allowed_hosts}",
   "rm -rf $work",
 ]
 with open(path, "w") as out:
@@ -115,4 +120,29 @@ if [ "$status" != "Success" ]; then
   exit 1
 fi
 
-echo "== Deployed: http://$public_ip/"
+echo "== Checking https://$SITE_DOMAIN/"
+# Needs the domain's A records on this box's IP (they change after web-kill + web-start);
+# Caddy gets the certificate once they do. A warning, not a failure: the box itself is fine.
+resolved=$(python3 -c "import socket, sys; print(socket.gethostbyname(sys.argv[1]))" "$SITE_DOMAIN" 2>/dev/null || true)
+if [ "$resolved" != "$public_ip" ]; then
+  echo "WARNING: $SITE_DOMAIN resolves to '${resolved:-nothing}', not $public_ip." >&2
+  echo "  Point the A records for $SITE_DOMAIN and www.$SITE_DOMAIN at $public_ip in Porkbun's DNS;" >&2
+  echo "  Caddy gets the HTTPS certificate once they do." >&2
+else
+  status=000
+  for attempt in $(seq 1 12); do
+    status=$(curl -s -o /dev/null -w '%{http_code}' "https://$SITE_DOMAIN/api/v1/snapshot/" || true)
+    if [ "$status" = "200" ]; then
+      break
+    fi
+    sleep 5
+  done
+  if [ "$status" = "200" ]; then
+    echo "GET https://$SITE_DOMAIN/api/v1/snapshot/ -> 200"
+  else
+    echo "WARNING: https://$SITE_DOMAIN/api/v1/snapshot/ -> $status; the certificate may still be on its way" >&2
+    echo "  (journalctl -u caddy on the box via SSM)" >&2
+  fi
+fi
+
+echo "== Deployed: https://$SITE_DOMAIN/ (Elastic IP $public_ip)"

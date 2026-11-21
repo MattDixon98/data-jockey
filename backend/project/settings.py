@@ -135,6 +135,11 @@ API_RATE_LIMIT = "60/min"
 # on the server). 0 (local, no proxy) uses the connection's own address and
 # ignores X-Forwarded-For, which a client could fake.
 API_NUM_PROXIES = int(os.environ.get("DJANGO_NUM_PROXIES", "0"))
+# Caddy terminates HTTPS and sets X-Forwarded-Proto (overwriting any value the client
+# sent), so behind it Django can trust the header: without it every request looks like
+# plain HTTP and the admin login fails the CSRF origin check. Ignored with no proxy.
+if API_NUM_PROXIES > 0:
+  SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 
 REST_FRAMEWORK = {
   "DEFAULT_AUTHENTICATION_CLASSES": [],

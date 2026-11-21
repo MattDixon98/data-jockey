@@ -63,6 +63,10 @@ python manage.py export_schema api.graphql.schema   # print the GraphQL SDL
 python manage.py spectacular --validate --file openapi.yaml   # write + check the REST OpenAPI schema
 ./scripts/deploy.sh               # bundle backend/ to S3, sam deploy, run deploy/setup.sh on the box via SSM
 aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-west-2   # shell on the server (no SSH)
+# Django admin (not public: Caddy 404s /admin): tunnel to gunicorn, then http://localhost:8000/admin/ (unstyled:
+# Caddy serves /static/). Users live in the box's db.sqlite3 (createsuperuser over the shell; gone after web-kill)
+aws ssm start-session --target <InstanceId> --document-name AWS-StartPortForwardingSession \
+  --parameters portNumber=8000,localPortNumber=8000 --profile data-jockey --region eu-west-2
 ```
 
 ## Architecture
@@ -102,6 +106,9 @@ aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-we
    runs the idempotent [deploy/setup.sh](backend/deploy/setup.sh) through SSM Run Command, which sets up a fresh box or
    updates a running one (code in `/opt/data-jockey/backend`, venv beside it, settings in `/etc/data-jockey/env`,
    rewritten every deploy except the generated secret key; gunicorn on 127.0.0.1:8000 behind Caddy).
+   Domain **mattdixon.uk** (Porkbun DNS, A records for it and `www` → the Elastic IP; update them after web-kill +
+   web-start): Caddy serves only the domain, gets the Let's Encrypt certificate itself and redirects www and HTTP.
+   The domain is set in `deploy/Caddyfile` and `scripts/deploy.sh` (`SITE_DOMAIN`, also Django's `ALLOWED_HOSTS`).
    A new snapshot column = DDL + a model field (+ a type field to expose it); a layout change the site must know about = bump
    `serving.FORMAT_VERSION` and `SNAPSHOT_FORMAT_VERSION` in settings together (fetch refuses a mismatch).
 

@@ -135,9 +135,11 @@ systemctl enable caddy
 systemctl reload-or-restart caddy
 
 echo "== Check"
-# Through Caddy, as a visitor would come in (gunicorn may take a moment to start).
+# Straight to gunicorn (it may take a moment to start): Caddy only answers HTTPS for the
+# domain, and its certificate needs DNS pointing here, which a fresh box's new IP may not
+# have yet. scripts/deploy.sh checks the public HTTPS URL afterwards.
 for attempt in $(seq 1 10); do
-  status=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${ALLOWED_HOSTS%%,*}" http://127.0.0.1/api/v1/snapshot/ || true)
+  status=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${ALLOWED_HOSTS%%,*}" http://127.0.0.1:8000/api/v1/snapshot/ || true)
   if [ "$status" = "200" ]; then
     echo "GET /api/v1/snapshot/ -> 200"
     exit 0

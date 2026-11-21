@@ -1,20 +1,29 @@
 # Caddy in front of gunicorn (deploy/systemd/data-jockey-web.service).
 # Copied to /etc/caddy/Caddyfile by deploy/setup.sh.
 #
-# Plain HTTP on the Elastic IP for now. Once the domain points here, replace
-# ":80" with the domain name and Caddy gets and renews a Let's Encrypt
-# certificate by itself (and redirects HTTP to HTTPS).
+# Served on mattdixon.uk: Caddy gets and renews a Let's Encrypt certificate by
+# itself (HTTP challenge on port 80) and redirects HTTP to HTTPS. The domain's A
+# records (Porkbun DNS: the bare domain and www) must point at the Elastic IP, which
+# changes after ./deploy web-kill + web-start. Requests to the bare IP get nothing.
+# The domain is also set in scripts/deploy.sh (SITE_DOMAIN).
 #
 # reverse_proxy sets X-Forwarded-For to the real client address, replacing any
 # value the client sent; Django reads it with DJANGO_NUM_PROXIES=1.
 #
 # The React app (built by scripts/deploy.sh, unpacked to ./site) is served from
-# here as static files; only the APIs and the admin go to Django (and /static/ comes from collectstatic). Unknown paths
+# here as static files; only the APIs go to Django (and /static/ comes from collectstatic). Unknown paths
 # get index.html so React Router can handle them (/races/123, /scorecard).
-:80 {
+#
+# The Django admin is not public: /admin is a 404 here. Reach it through an SSM tunnel
+# straight to gunicorn (http://localhost:8000/admin/, see CLAUDE.md), which skips Caddy.
+mattdixon.uk {
   encode zstd gzip
 
-  @django path /api/* /graphql* /admin/*
+  handle /admin* {
+    respond 404
+  }
+
+  @django path /api/* /graphql*
   # collectstatic's output (admin and browsable API CSS/JS), straight from disk.
   handle /static/* {
     root * /opt/data-jockey/backend/staticfiles
@@ -34,4 +43,8 @@
     try_files {path} /index.html
     file_server
   }
+}
+
+www.mattdixon.uk {
+  redir https://mattdixon.uk{uri} permanent
 }
