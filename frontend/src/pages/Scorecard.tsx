@@ -41,6 +41,11 @@ export default function Scorecard() {
                   <td className="num">{percent(row.top_pick_won_model)}</td>
                   <td className="num">{percent(row.top_pick_won_market)}</td>
                 </tr>
+                <tr>
+                  <td>Return backing the favourite / top pick at SP</td>
+                  <td className="num">{signedPercent(row.top_pick_roi_model)}</td>
+                  <td className="num">{signedPercent(row.top_pick_roi_market)}</td>
+                </tr>
               </tbody>
             </table>
             <p>
