@@ -109,6 +109,8 @@ export interface ScorecardRow {
   bets_won: number;
   profit_units: number | null;
   roi: number | null;
+  top_pick_profit_model: number | null;
+  top_pick_profit_market: number | null;
   top_pick_roi_model: number | null;
   top_pick_roi_market: number | null;
 }

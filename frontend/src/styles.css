@@ -152,3 +152,58 @@ select {
   main, footer { padding: 12px; }
   th, td { padding: 6px 4px; }
 }
+
+/* Scorecard: top-pick ROI chart (src/roi.tsx). Ours = accent green, market = muted dashed. */
+.controls { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 12px 0; }
+.choice { display: inline-flex; }
+.choice button { border-radius: 0; margin-left: -1px; color: var(--muted); }
+.choice button:first-child { border-radius: 6px 0 0 6px; margin-left: 0; }
+.choice button:last-child { border-radius: 0 6px 6px 0; }
+.choice button.active { background: var(--badge-bg); color: var(--badge-text); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 20px; font-size: 0.9rem; }
+.swatch { display: inline-block; width: 14px; height: 0; border-top: 2px solid; margin-right: 6px; vertical-align: middle; }
+.swatch.ours { border-color: var(--accent); border-top-width: 3px; }
+.swatch.market { border-color: var(--muted); border-top-style: dashed; }
+.chart-wrap { position: relative; margin-top: 8px; }
+.chart { display: block; width: 100%; height: auto; touch-action: pan-y; }
+.chart text { fill: var(--muted); font-size: 12px; }
+.chart .axis { stroke: var(--line); }
+.chart .axis.zero { stroke: var(--muted); stroke-opacity: 0.6; }
+.chart .cursor { stroke: var(--muted); stroke-dasharray: 2 3; }
+/* Hover: the cursor line and dots glide between days and fade in/out; the tooltip
+   follows the pointer and slides across when it flips side. */
+.chart .cursor, .chart .dot {
+  opacity: 0;
+  transition: transform 160ms ease-out, opacity 160ms ease-out;
+}
+.chart .cursor.on, .chart .dot.on { opacity: 1; }
+.chart .lines { animation: chart-in 350ms ease-out; }
+@keyframes chart-in { from { opacity: 0; } }
+.chart .series polyline { fill: none; stroke-linejoin: round; stroke-linecap: round; }
+.chart .series.ours polyline { stroke: var(--accent); stroke-width: 2.5; }
+.chart .series.market polyline { stroke: var(--muted); stroke-width: 2; stroke-dasharray: 6 5; }
+.chart .series circle { stroke: var(--panel); stroke-width: 2; }
+.chart .series.ours circle { fill: var(--accent); }
+.chart .series.market circle { fill: var(--muted); }
+.tooltip {
+  position: absolute;
+  top: 8px;
+  pointer-events: none;
+  min-width: 190px;
+  padding: 8px 10px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  font-size: 0.85rem;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 160ms ease-out, transform 220ms ease-out;
+}
+.tooltip.on { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .chart .cursor, .chart .dot, .tooltip { transition: none; }
+  .chart .lines { animation: none; }
+}
+.tooltip-head { font-weight: 600; margin-bottom: 4px; }
+.tooltip-row { display: flex; justify-content: space-between; gap: 16px; }

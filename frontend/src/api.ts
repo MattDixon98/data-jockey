@@ -22,5 +22,12 @@ export const useRace = (raceId: string) =>
 export const useScorecard = () =>
   useQuery({ queryKey: ["scorecard"], queryFn: () => get<ScorecardRow[]>("scorecard/") });
 
+/** One row per race day and race group, for one view (after_race or site_pick). */
+export const useDailyScorecard = (view: string) =>
+  useQuery({
+    queryKey: ["scorecard", "day", view],
+    queryFn: () => get<ScorecardRow[]>(`scorecard/?view=${view}&period_type=day`),
+  });
+
 export const useSnapshotInfo = () =>
   useQuery({ queryKey: ["snapshot"], queryFn: () => get<SnapshotInfo>("snapshot/") });
