@@ -18,6 +18,17 @@ Parameters:
   InstanceType:
     Type: String
     Default: t4g.micro
+  AlertEmail:
+    # Read from SSM at deploy time so the address isn't in this (public) repo. Set it once:
+    #   aws ssm put-parameter --name /data-jockey/alert-email --type String --value <email> \
+    #     --profile data-jockey --region eu-west-2
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: /data-jockey/alert-email
+    Description: Where the cost budget's alerts go
+  MonthlyBudgetUsd:
+    Type: Number
+    Default: 30
+    Description: Whole-account monthly cost budget; the web server is stopped when actual spend reaches it
 
 Resources:
   # Default VPC (no subnet given, so the default subnet of a default AZ).
@@ -84,6 +95,10 @@ Resources:
       ImageId: !Ref ImageId
       InstanceType: !Ref InstanceType
       IamInstanceProfile: !Ref InstanceProfile
+      # T instances default to "unlimited": sustained load (e.g. a request flood) is billed as
+      # extra CPU. Standard caps it at the baseline, so the box gets slower, not dearer.
+      CreditSpecification:
+        CPUCredits: standard
       SecurityGroupIds:
         - !GetAtt SecurityGroup.GroupId
       BlockDeviceMappings:
@@ -111,6 +126,76 @@ Resources:
     Properties:
       AllocationId: !GetAtt ElasticIp.AllocationId
       InstanceId: !Ref Instance
+
+  # Cost safety net for the whole account (every stack, not just this one): emails at
+  # 80% of actual spend and when the month is forecast to go over, and stops the web
+  # server once actual spend reaches the budget. Billing data lags by up to a day, so
+  # it's a backstop, not a real-time limit. The action fires once per month; after it
+  # has, start the box again with `aws ec2 start-instances` (or ./deploy web-start).
+  # Deleted with the stack by ./deploy web-kill (nothing left then that can run away).
+  MonthlyBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: data-jockey-monthly
+        BudgetType: COST
+        TimeUnit: MONTHLY
+        BudgetLimit:
+          Amount: !Ref MonthlyBudgetUsd
+          Unit: USD
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            ThresholdType: PERCENTAGE
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            ThresholdType: PERCENTAGE
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+  # Budgets runs the AWS-StopEC2Instance automation as this role; the managed policy
+  # only allows start/stop through SSM, and the action names this instance alone.
+  BudgetActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AWSBudgetsActions_RolePolicyForResourceAdministrationWithSSM
+
+  StopWebServerAction:
+    Type: AWS::Budgets::BudgetsAction
+    Properties:
+      BudgetName: !Ref MonthlyBudget
+      NotificationType: ACTUAL
+      ActionType: RUN_SSM_DOCUMENTS
+      ActionThreshold:
+        Type: PERCENTAGE
+        Value: 100
+      ApprovalModel: AUTOMATIC
+      ExecutionRoleArn: !GetAtt BudgetActionRole.Arn
+      Definition:
+        SsmActionDefinition:
+          Subtype: STOP_EC2_INSTANCES
+          Region: !Ref AWS::Region
+          InstanceIds:
+            - !Ref Instance
+      Subscribers:
+        - Type: EMAIL
+          Address: !Ref AlertEmail
 
 Outputs:
   InstanceId:

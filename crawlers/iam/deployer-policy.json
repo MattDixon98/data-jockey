@@ -132,6 +132,36 @@
       "Resource": "*"
     },
     {
+      "Sid": "ManageProjectBudgets",
+      "Effect": "Allow",
+      "Action": [
+        "budgets:ViewBudget",
+        "budgets:ModifyBudget",
+        "budgets:CreateBudgetAction",
+        "budgets:UpdateBudgetAction",
+        "budgets:DeleteBudgetAction",
+        "budgets:DescribeBudgetAction",
+        "budgets:DescribeBudgetActionsForBudget",
+        "budgets:TagResource",
+        "budgets:UntagResource",
+        "budgets:ListTagsForResource"
+      ],
+      "Resource": [
+        "arn:aws:budgets::*:budget/data-jockey-*",
+        "arn:aws:budgets::*:budget/data-jockey-*/action/*"
+      ]
+    },
+    {
+      "Sid": "ReadProjectParameters",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:GetParameter",
+        "ssm:GetParameters",
+        "ssm:PutParameter"
+      ],
+      "Resource": "arn:aws:ssm:*:*:parameter/data-jockey/*"
+    },
+    {
       "Sid": "ReadIamForConsolesAndPickers",
       "Effect": "Allow",
       "Action": [

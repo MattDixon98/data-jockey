@@ -96,7 +96,9 @@ aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-we
    Both APIs live in `api/` and sit on those models: GraphQL (`api/graphql/`, Strawberry, `/graphql/`) and REST
    (`api/rest/`, DRF, `/api/v1/`), both through `api/queries.py`; see "APIs" below.
    **Server** (`backend/template.yaml`, stack `data-jockey-web`): one EC2 t4g.micro (Ubuntu 24.04, AMI pinned in
-   samconfig) with an Elastic IP, ports 80/443 only, no SSH. No user data: `scripts/deploy.sh` uploads the bundle and
+   samconfig) with an Elastic IP, ports 80/443 only, no SSH, `CPUCredits: standard` (load can't add cost); the stack also
+   holds the account-wide $30/month budget (`data-jockey-monthly`, email from SSM `/data-jockey/alert-email`), whose
+   action stops the instance at 100% actual spend. No user data: `scripts/deploy.sh` uploads the bundle and
    runs the idempotent [deploy/setup.sh](backend/deploy/setup.sh) through SSM Run Command, which sets up a fresh box or
    updates a running one (code in `/opt/data-jockey/backend`, venv beside it, settings in `/etc/data-jockey/env`,
    rewritten every deploy except the generated secret key; gunicorn on 127.0.0.1:8000 behind Caddy).
