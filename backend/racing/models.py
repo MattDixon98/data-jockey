@@ -291,7 +291,7 @@ class ModelValue(SnapshotModel):
 class ModelScorecard(SnapshotModel):
   pk = models.CompositePrimaryKey("view", "period_type", "period", "race_group")
   view = models.TextField(help_text="after_race (vs SP) or site_pick (the race-morning flags).")
-  period_type = models.TextField(help_text="all, month or model_version.")
+  period_type = models.TextField(help_text="all, month, day or model_version.")
   period = models.TextField()
   race_group = models.TextField(help_text="all, flat or jumps.")
   first_race = models.DateField(null=True)

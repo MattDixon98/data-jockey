@@ -686,7 +686,7 @@ def test_scorecard_numbers_match_the_rows(out_of_sample):
 def test_scorecard_breakdowns(out_of_sample):
   _, graded = out_of_sample
   keys = {(r.period_type, r.period, r.race_group) for r in model_scorecard(graded).collect()}
-  periods = {("all", "all"), ("month", "2026-11"), ("model_version", "2026-11-10")}
+  periods = {("all", "all"), ("month", "2026-11"), ("day", "2026-11-12"), ("model_version", "2026-11-10")}
   groups = {"all", "jumps"}  # 948004 is a hurdle race
   assert keys == {(pt, p, g) for pt, p in periods for g in groups}
 

@@ -17,7 +17,7 @@ for after_race, the forecast for site_pick), also settled at SP. Joint
 favourites split the unit, so each strategy stakes exactly 1 unit per race.
 
 model_scorecard has one row per view, period (all time, each month, each
-model version) and race group (all, flat, jumps). With few races the
+day, each model version) and race group (all, flat, jumps). With few races the
 numbers swing a lot by chance, so the flags carry a z-score and a 95% range
 on their return.
 """
@@ -108,10 +108,11 @@ def graded_view_rows(value: DataFrame, races: DataFrame) -> DataFrame:
 
 
 def with_breakdowns(df: DataFrame) -> DataFrame:
-  """Each row once per period (all time, its month, its model version) and race group (all, and its own flat/jumps): six copies, ready to group."""
+  """Each row once per period (all time, its month, its day, its model version) and race group (all, and its own flat/jumps): eight copies, ready to group."""
   periods = array(
     struct(lit("all").alias("period_type"), lit("all").alias("period")),
     struct(lit("month").alias("period_type"), date_format("race_date", "yyyy-MM").alias("period")),
+    struct(lit("day").alias("period_type"), date_format("race_date", "yyyy-MM-dd").alias("period")),
     struct(lit("model_version").alias("period_type"), col("model_version").alias("period")),
   )
   groups = array(lit("all"), col("race_group"))
