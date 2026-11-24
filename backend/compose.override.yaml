@@ -1,0 +1,19 @@
+# Local development only: `docker compose up --build` merges this over compose.yaml.
+# The server runs compose.yaml alone.
+#   - Django settings from backend/.env (DJANGO_DEBUG, AWS_PROFILE...)
+#   - the local snapshot (backend/data/) instead of the snapshot volume
+#   - your AWS credentials, read-only, for fetch_snapshot
+# The site is then https://localhost/ (Caddy's local CA; curl -k).
+x-local-django: &local-django
+  env_file:
+    - path: .env
+      required: false
+  volumes:
+    - ./data:/app/data
+    - ~/.aws:/home/app/.aws:ro
+
+services:
+  web:
+    <<: *local-django
+  snapshot:
+    <<: *local-django

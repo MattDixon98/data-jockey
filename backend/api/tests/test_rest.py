@@ -212,7 +212,8 @@ class RateLimitTests(ApiTestCase):
       self.get("/courses/", REMOTE_ADDR="10.0.0.2")
 
   def test_forwarded_for_is_ignored_without_a_proxy(self):
-    with self.limited_to("1/min"):
+    # Pinned: the environment may set DJANGO_NUM_PROXIES (compose.yaml does, for the web container).
+    with self.limited_to("1/min"), mock.patch.object(api_settings, "NUM_PROXIES", 0):
       self.get("/courses/", HTTP_X_FORWARDED_FOR="1.1.1.1")
       self.get("/courses/", status=429, HTTP_X_FORWARDED_FOR="2.2.2.2")
 

@@ -1,0 +1,12 @@
+# Kept out of the images: local settings and secrets, runtime data, build output.
+.env
+data/
+db.sqlite3
+*.sqlite3
+staticfiles/
+site/
+**/__pycache__/
+**/*.py[cod]
+.aws-sam/
+.venv/
+venv/

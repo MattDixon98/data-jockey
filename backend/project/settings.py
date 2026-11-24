@@ -88,11 +88,15 @@ SNAPSHOT_S3_URI = os.environ.get("DATA_JOCKEY_SNAPSHOT_S3_URI", "")
 SNAPSHOT_FORMAT_VERSION = 1
 AWS_REGION = "eu-west-2"
 
+# Django's own database (sessions, admin users). A relative DJANGO_DB_PATH is taken
+# from backend/; in Docker it points at a volume, so it outlives the container.
+DJANGO_DB_PATH = BASE_DIR / os.environ.get("DJANGO_DB_PATH", "db.sqlite3")
+
 DATABASES = {
   # Django's own tables (sessions, admin). Never the racing data.
   "default": {
     "ENGINE": "django.db.backends.sqlite3",
-    "NAME": BASE_DIR / "db.sqlite3",
+    "NAME": DJANGO_DB_PATH,
   },
   # The racing app's models (racing.routers.SnapshotRouter). Opened read-only,
   # and a new connection per request (CONN_MAX_AGE=0): a connection holds on to
