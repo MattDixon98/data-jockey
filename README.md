@@ -55,7 +55,7 @@ based on past performance.
 | Layer          | Technology                                                                                            |
 |----------------|-------------------------------------------------------------------------------------------------------|
 | Crawlers       | TypeScript, Node.js 22                                                                                |
-| Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM, Docker (Compose), ECR                                |
+| Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM, Docker (Compose), ECR, GitHub Actions (CI)           |
 | Processing     | AWS Glue (PySpark), Apache Iceberg, Athena                                                            |
 | Modelling      | Python (NumPy, SciPy), AWS Glue Python shell                                                          |
 | Data serving   | SQLite snapshot generated daily from processed tables                                                 |
@@ -89,6 +89,7 @@ based on past performance.
   template and setup (`deploy/`: the Caddy image, the server setup script)
 - `frontend/`: the React website (Vite, TypeScript), built into the Caddy image by the web deploy
 - `dashboard/`: Streamlit app charting top-pick ROI from the REST API
+- `.github/workflows/`: CI, one workflow per subproject (tests, type checks, the website's Docker images)
 - `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
   dependency order
 

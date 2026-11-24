@@ -17,6 +17,11 @@ the subproject directory.
 
 ## Commands
 
+CI (`.github/workflows/`, GitHub Actions, on pushes to main and PRs, each only when its directory changes):
+`backend.yml` builds both images from compose.yaml (amd64) and runs `test api` + `spectacular --validate --fail-on-warn`
+in the web image; `glue.yml` pytest (Python 3.11, Java 17, ~10 min); `model.yml` pytest in `python:3.9-slim`;
+`crawlers.yml` typecheck. CI has no AWS access: deploys stay local.
+
 From the repo root, `./deploy crawlers|glue|model|web|all` runs a subproject's own deploy (`all` in that
 order: each stack uses a bucket the one before it creates).
 `./deploy web-kill` deletes the web stack (`backend/scripts/server.sh`: server down, no cost); `./deploy web-start`
