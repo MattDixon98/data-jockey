@@ -29,7 +29,7 @@ based on past performance.
    favourite against the market's at SP, by month, day and model version.
    See [model/model_description.md](model/model_description.md).
 5. **Serve:** the Glue job exports the UK and Irish data to a single SQLite file
-   in S3. A systemd timer on the web server runs a Django management command that
+   in S3. A container on the web server runs a Django management command that
    checks its ETag, then downloads, verifies and atomically swaps in a new one with
    no restart. Django reads it through unmanaged, read-only models, so there's no
    database server to run.
@@ -40,11 +40,13 @@ based on past performance.
    of SQL queries.
 7. **Website:** a React single-page app (Vite, TypeScript, React Router, TanStack
    Query) built to static files, reading the REST API, with a hand-drawn SVG chart
-   of top-pick ROI by day (no chart library). It's served from one EC2
-   instance (its own SAM stack, set up over SSM with no SSH), with gunicorn behind
-   Caddy, which also serves the React build from the same domain (no CORS) and
-   handles HTTPS automatically. An AWS Budgets action stops the server if monthly
-   spend hits its limit.
+   of top-pick ROI by day (no chart library). It runs in Docker Compose on one EC2
+   instance (its own SAM stack, set up over SSM with no SSH): gunicorn behind Caddy,
+   which serves the React build from the same domain (no CORS) and handles HTTPS
+   automatically. Multi-stage builds bake the frontend into the Caddy image; images
+   are built for ARM, tagged by git commit and scanned on push to ECR, and the same
+   Compose file runs the whole site locally. An AWS Budgets action stops the server
+   if monthly spend hits its limit.
 8. **Dashboard:** a Streamlit app (pandas, requests) charts the same top-pick ROI
    from the public REST API, daily or cumulative, as a second client of the API.
 
@@ -53,7 +55,7 @@ based on past performance.
 | Layer          | Technology                                                                                            |
 |----------------|-------------------------------------------------------------------------------------------------------|
 | Crawlers       | TypeScript, Node.js 22                                                                                |
-| Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM                                                       |
+| Infrastructure | AWS SAM, Lambda, EventBridge Scheduler, S3, IAM, Docker (Compose), ECR, GitHub Actions (CI)           |
 | Processing     | AWS Glue (PySpark), Apache Iceberg, Athena                                                            |
 | Modelling      | Python (NumPy, SciPy), AWS Glue Python shell                                                          |
 | Data serving   | SQLite snapshot generated daily from processed tables                                                 |
@@ -83,10 +85,11 @@ based on past performance.
 - `model/`: monthly model training (Glue Python shell job), its `data_jockey_model` package, tests, AWS SAM
   template and [model_description.md](model/model_description.md)
 - `backend/`: Django project: read-only models over the daily SQLite file, the command that fetches new ones,
-  the REST and GraphQL APIs (`api/`) and their tests, plus the web server's AWS SAM template and its setup
-  (`deploy/`: Caddy, gunicorn and systemd)
-- `frontend/`: the React website (Vite, TypeScript), built and shipped by the web deploy
+  the REST and GraphQL APIs (`api/`) and their tests, plus the web server's Dockerfile, Compose file, AWS SAM
+  template and setup (`deploy/`: the Caddy image, the server setup script)
+- `frontend/`: the React website (Vite, TypeScript), built into the Caddy image by the web deploy
 - `dashboard/`: Streamlit app charting top-pick ROI from the REST API
+- `.github/workflows/`: CI, one workflow per subproject (tests, type checks, the website's Docker images)
 - `deploy`: deploys a subproject's AWS stack, e.g. `./deploy glue`, or `./deploy all` for every stack in
   dependency order
 

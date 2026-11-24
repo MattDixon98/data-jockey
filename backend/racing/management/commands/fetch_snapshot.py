@@ -2,7 +2,7 @@
 
   python manage.py fetch_snapshot [--force]
 
-Run every ~15 minutes on the server by a systemd timer (backend/deploy/systemd/).
+Run every ~15 minutes on the server by the snapshot container (backend/compose.yaml).
 Compares the S3 object's ETag with the one saved next to the file
 (<snapshot>.etag) and does nothing if they match. Otherwise it downloads to a
 temporary file in the same directory, checks it (integrity, format version,

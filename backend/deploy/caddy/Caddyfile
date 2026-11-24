@@ -1,0 +1,51 @@
+# Caddy in front of gunicorn, in the caddy container (deploy/caddy/Dockerfile).
+#
+# SITE_DOMAIN comes from compose.yaml: mattdixon.uk on the server, localhost locally
+# (Caddy then uses its own local CA, so the browser warns once; curl -k).
+# On a real domain Caddy gets and renews a Let's Encrypt certificate by itself (HTTP
+# challenge on port 80), kept in the caddy-data volume, and redirects HTTP to HTTPS.
+# The domain's A records (Porkbun DNS: the bare domain and www) must point at the
+# Elastic IP, which changes after ./deploy web-kill + web-start. Requests to the bare
+# IP get nothing.
+#
+# reverse_proxy sets X-Forwarded-For to the real client address, replacing any value
+# the client sent; Django reads it with DJANGO_NUM_PROXIES=1.
+#
+# The React app and Django's collectstatic output are baked into this image
+# (/srv/site, /srv/static); only the APIs go to Django. Unknown paths get index.html
+# so React Router can handle them (/races/123, /scorecard).
+#
+# The Django admin is not public: /admin is a 404 here. Reach it through an SSM tunnel
+# to gunicorn (published on the host's 127.0.0.1:8000, see CLAUDE.md), which skips Caddy.
+{$SITE_DOMAIN} {
+  encode zstd gzip
+
+  handle /admin* {
+    respond 404
+  }
+
+  # collectstatic's output (admin and browsable API CSS/JS).
+  handle /static/* {
+    root * /srv/static
+    uri strip_prefix /static
+    file_server
+  }
+
+  @django path /api/* /graphql*
+  handle @django {
+    reverse_proxy web:8000
+  }
+
+  handle {
+    root * /srv/site
+    # Vite fingerprints everything under /assets/, so it can be cached for good.
+    @assets path /assets/*
+    header @assets Cache-Control "public, max-age=31536000, immutable"
+    try_files {path} /index.html
+    file_server
+  }
+}
+
+www.{$SITE_DOMAIN} {
+  redir https://{$SITE_DOMAIN}{uri} permanent
+}

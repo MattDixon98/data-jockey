@@ -38,6 +38,86 @@ Resources:
         Description: Clean racing tables (Iceberg)
         LocationUri: !Sub s3://${WarehouseBucket}/warehouse/data_jockey.db
 
+  # The website's Docker images (backend/compose.yaml), pushed by
+  # backend/scripts/push_images.sh and pulled by the web server. Here rather than
+  # in the web stack so ./deploy web-kill leaves them (and web-start pulls straight
+  # away), like the clean bucket the web deploy already uses. Each keeps its last
+  # 5 images (tagged with the git commit), inside ECR's 500 MB free tier.
+  WebImageRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: data-jockey-web
+      # Mutable: a redeploy of the same commit (or a -dirty build) reuses its tag.
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images (a tag moved to a newer push)",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {"type": "expire"}
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep the last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+
+  CaddyImageRepository:
+    Type: AWS::ECR::Repository
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      RepositoryName: data-jockey-caddy
+      ImageTagMutability: MUTABLE
+      ImageScanningConfiguration:
+        ScanOnPush: true
+      LifecyclePolicy:
+        LifecyclePolicyText: |
+          {
+            "rules": [
+              {
+                "rulePriority": 1,
+                "description": "Remove untagged images (a tag moved to a newer push)",
+                "selection": {
+                  "tagStatus": "untagged",
+                  "countType": "sinceImagePushed",
+                  "countUnit": "days",
+                  "countNumber": 1
+                },
+                "action": {"type": "expire"}
+              },
+              {
+                "rulePriority": 2,
+                "description": "Keep the last 5 images",
+                "selection": {
+                  "tagStatus": "any",
+                  "countType": "imageCountMoreThan",
+                  "countNumber": 5
+                },
+                "action": {"type": "expire"}
+              }
+            ]
+          }
+
   # Role name is generated from the stack name (data-jockey-glue-...), which
   # keeps it inside the deployer policy's data-jockey-* scope.
   GlueJobRole:
@@ -166,3 +246,9 @@ Outputs:
   SnapshotLocation:
     Description: The website's SQLite snapshot, rewritten by every job run
     Value: !Sub s3://${WarehouseBucket}/serving/data_jockey.sqlite3
+  WebImageRepositoryUri:
+    Description: The website's Django image (backend/Dockerfile)
+    Value: !GetAtt WebImageRepository.RepositoryUri
+  CaddyImageRepositoryUri:
+    Description: The website's Caddy image (backend/deploy/caddy/Dockerfile)
+    Value: !GetAtt CaddyImageRepository.RepositoryUri

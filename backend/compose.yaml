@@ -1,0 +1,90 @@
+# The website as three containers (from backend/):
+#   web       Django under gunicorn (Dockerfile)
+#   snapshot  the same image, fetching the serving snapshot from S3 every 15 minutes
+#   caddy     HTTPS, the React app and static files, proxying /api and /graphql to web
+#
+# Locally `docker compose up --build` also reads compose.override.yaml (localhost, the
+# local snapshot, your AWS profile). On the server only this file is used.
+#
+# Settings: Django's come from /etc/data-jockey/env on the server (written by
+# deploy/setup.sh) or backend/.env locally (the override). SITE_DOMAIN, IMAGE_REGISTRY
+# and IMAGE_TAG are read from the shell or from compose's own .env beside this file;
+# unset, the images are the local data-jockey-web:local and data-jockey-caddy:local.
+# scripts/push_images.sh sets IMAGE_REGISTRY (ECR, with a trailing /) and IMAGE_TAG
+# (the git commit) to build and push the server's linux/arm64 images.
+name: data-jockey
+
+x-django-settings: &django-settings
+  env_file:
+    - path: /etc/data-jockey/env
+      required: false
+  environment:
+    # Caddy is the one proxy in front of gunicorn (the API's per-IP rate limit).
+    DJANGO_NUM_PROXIES: "1"
+    DATA_JOCKEY_SNAPSHOT: data/data_jockey.sqlite3
+
+services:
+  web:
+    build: .
+    image: ${IMAGE_REGISTRY:-}data-jockey-web:${IMAGE_TAG:-local}
+    <<: *django-settings
+    volumes:
+      - snapshot:/app/data
+      - django-db:/app/var
+    # Host loopback only: for the SSM tunnel to the admin. The public way in is Caddy.
+    ports:
+      - "127.0.0.1:8000:8000"
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/snapshot/', timeout=5)"
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+    restart: unless-stopped
+
+  snapshot:
+    image: ${IMAGE_REGISTRY:-}data-jockey-web:${IMAGE_TAG:-local}
+    <<: *django-settings
+    # fetch_snapshot checks the S3 ETag (one HEAD request) and only downloads a changed
+    # file, swapping it in with os.replace: web picks it up on the next request.
+    # A failed check is logged and retried next time round.
+    command:
+      - sh
+      - -c
+      - "while true; do python manage.py fetch_snapshot || echo 'fetch_snapshot failed'; sleep 900; done"
+    volumes:
+      - snapshot:/app/data
+    depends_on:
+      - web
+    restart: unless-stopped
+
+  caddy:
+    build:
+      context: .
+      dockerfile: deploy/caddy/Dockerfile
+      additional_contexts:
+        frontend: ../frontend
+        web: service:web
+    image: ${IMAGE_REGISTRY:-}data-jockey-caddy:${IMAGE_TAG:-local}
+    environment:
+      SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      # Certificates: must survive restarts, or Let's Encrypt's rate limits bite.
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - web
+    restart: unless-stopped
+
+volumes:
+  snapshot:
+  django-db:
+  caddy-data:
+  caddy-config:
