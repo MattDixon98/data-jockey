@@ -1,34 +1,39 @@
 #!/usr/bin/env bash
-# Sets up the web server, or updates it, from an unpacked backend bundle.
+# Sets up the web server, or updates it: Docker, then the site's containers.
 #
-#   sudo bash setup.sh <unpacked backend dir> <snapshot s3 uri> <allowed hosts>
+#   sudo bash setup.sh <bundle dir> <snapshot s3 uri> <allowed hosts> <site domain> <registry> <image tag>
 #
 # Run as root on the instance by scripts/deploy.sh (SSM Run Command) on every
-# deploy. Idempotent: a fresh Ubuntu 24.04 box gets packages, user, swap,
-# virtualenv and services; a running one gets the new code, dependencies and
-# settings, then gunicorn restarts.
+# deploy. The bundle holds compose.yaml and this script; the images (web, caddy)
+# are pulled from ECR (<registry>/data-jockey-web:<image tag>...), pushed there by
+# scripts/push_images.sh. Idempotent: a fresh Ubuntu 24.04 box gets Docker, swap
+# and the containers; a running one gets the new images and settings.
 #
-# Layout (the systemd units in deploy/systemd/ assume it):
-#   /opt/data-jockey/backend   the code, plus data/ (the snapshot) and db.sqlite3,
-#                              which are kept across deploys
-#   /opt/data-jockey/venv      virtualenv
-#   /etc/data-jockey/env       settings; the secret key is generated once and kept
+# Layout:
+#   /opt/data-jockey/compose.yaml   the stack (backend/compose.yaml)
+#   /opt/data-jockey/.env           compose's own settings: images, tag, domain
+#   /etc/data-jockey/env            Django's settings; the secret key is generated once and kept
+#   Docker volumes                  data-jockey_snapshot (the SQLite file), _django-db
+#                                   (admin users, sessions), _caddy-data (certificates)
 set -euo pipefail
 
-if [ $# -ne 3 ]; then
-  sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'
+if [ $# -ne 6 ]; then
+  sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 fi
 SRC=$1
 SNAPSHOT_S3_URI=$2
 ALLOWED_HOSTS=$3
+SITE_DOMAIN=$4
+REGISTRY=$5
+IMAGE_TAG=$6
 
-APP_USER=data-jockey
 APP_DIR=/opt/data-jockey
-CODE_DIR=$APP_DIR/backend
-VENV=$APP_DIR/venv
 ENV_DIR=/etc/data-jockey
 ENV_FILE=$ENV_DIR/env
+PROJECT=data-jockey
+REGION=eu-west-2
+COMPOSE=(docker compose --project-directory "$APP_DIR" -f "$APP_DIR/compose.yaml")
 
 # One setup at a time (a deploy retried while the last one is still running).
 exec 9>/var/lock/data-jockey-setup.lock
@@ -36,29 +41,29 @@ flock 9
 
 export DEBIAN_FRONTEND=noninteractive
 
-echo "== Packages"
-if [ ! -f /etc/apt/sources.list.d/caddy-stable.list ]; then
-  # Caddy's own apt repo (https://caddyserver.com/docs/install#debian-ubuntu-raspbian);
-  # Ubuntu's caddy package is well behind.
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
-    | gpg --dearmor --yes -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
-    > /etc/apt/sources.list.d/caddy-stable.list
-  chmod o+r /usr/share/keyrings/caddy-stable-archive-keyring.gpg /etc/apt/sources.list.d/caddy-stable.list
-fi
-missing=()
-for package in caddy python3-venv rsync; do
-  if ! dpkg -s "$package" >/dev/null 2>&1; then
-    missing+=("$package")
-  fi
-done
-if [ ${#missing[@]} -gt 0 ]; then
+echo "== Docker"
+if ! command -v docker >/dev/null 2>&1; then
+  # Docker's own apt repo (https://docs.docker.com/engine/install/ubuntu/); Ubuntu's
+  # docker.io has no compose plugin.
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  codename=$(. /etc/os-release && echo "$VERSION_CODENAME")
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc]" \
+    "https://download.docker.com/linux/ubuntu $codename stable" > /etc/apt/sources.list.d/docker.list
   apt-get update -q
-  apt-get install -y -q "${missing[@]}"
+  apt-get install -y -q docker-ce docker-ce-cli containerd.io docker-compose-plugin
 fi
+# Container logs are capped (the default json-file log grows without limit on a 10 GB disk).
+daemon_json='{"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}'
+if [ "$(cat /etc/docker/daemon.json 2>/dev/null)" != "$daemon_json" ]; then
+  echo "$daemon_json" > /etc/docker/daemon.json
+  systemctl restart docker
+fi
+systemctl enable --now docker
 
 echo "== Swap"
-# 1 GB of RAM: pip installs and two gunicorn workers are happier with swap.
+# 1 GB of RAM: Docker plus two gunicorn workers are happier with swap.
 if [ ! -f /swapfile ]; then
   fallocate -l 1G /swapfile
   chmod 600 /swapfile
@@ -67,85 +72,101 @@ if [ ! -f /swapfile ]; then
 fi
 swapon --show=NAME --noheadings | grep -qx /swapfile || swapon /swapfile
 
-echo "== User"
-if ! id "$APP_USER" >/dev/null 2>&1; then
-  useradd --system --home-dir "$APP_DIR" --shell /usr/sbin/nologin "$APP_USER"
-fi
-
-echo "== Code"
-mkdir -p "$CODE_DIR/data"
-# --delete removes files dropped from the repo; the excludes are runtime state
-# (and so are never deleted): the snapshot, Django's own database, bytecode.
-rsync -a --delete \
-  --exclude /data/ \
-  --exclude /db.sqlite3 \
-  --exclude /staticfiles/ \
-  --exclude /.env \
-  --exclude __pycache__/ \
-  "$SRC"/ "$CODE_DIR"/
-chown -R "$APP_USER:$APP_USER" "$APP_DIR"
-
-echo "== Virtualenv"
-if [ ! -x "$VENV/bin/python" ]; then
-  sudo -u "$APP_USER" python3 -m venv "$VENV"
-fi
-sudo -u "$APP_USER" "$VENV/bin/pip" install --quiet --upgrade pip
-sudo -u "$APP_USER" "$VENV/bin/pip" install --quiet -r "$CODE_DIR/requirements.txt"
-
 echo "== Settings"
-mkdir -p "$ENV_DIR"
+mkdir -p "$ENV_DIR" "$APP_DIR"
 secret_key=""
 if [ -f "$ENV_FILE" ]; then
   secret_key=$(sed -n 's/^DJANGO_SECRET_KEY=//p' "$ENV_FILE")
 fi
 if [ -z "$secret_key" ]; then
-  # URL-safe characters only, so nothing in it needs quoting in an EnvironmentFile.
+  # URL-safe characters only, so nothing in it needs quoting in an env file.
   secret_key=$(python3 -c "import secrets; print(secrets.token_urlsafe(50))")
 fi
 # Written whole every deploy, so a setting changed here reaches the server.
+# DJANGO_NUM_PROXIES and the snapshot path are set in compose.yaml.
 cat > "$ENV_FILE.tmp" <<EOF
 # Written by backend/deploy/setup.sh on every deploy; edits here are overwritten.
 DJANGO_SECRET_KEY=$secret_key
 DJANGO_ALLOWED_HOSTS=$ALLOWED_HOSTS
 DATA_JOCKEY_SNAPSHOT_S3_URI=$SNAPSHOT_S3_URI
-# Caddy is the one proxy in front of gunicorn (the API's per-IP rate limit).
-DJANGO_NUM_PROXIES=1
 EOF
-chown root:"$APP_USER" "$ENV_FILE.tmp"
-chmod 640 "$ENV_FILE.tmp"
+chmod 600 "$ENV_FILE.tmp"
 mv "$ENV_FILE.tmp" "$ENV_FILE"
 
-echo "== Django"
-# Only the default database (sessions, admin); the router keeps migrations off the snapshot.
-sudo -u "$APP_USER" sh -c "set -a; . '$ENV_FILE'; cd '$CODE_DIR'; '$VENV/bin/python' manage.py migrate --noinput"
-sudo -u "$APP_USER" sh -c "set -a; . '$ENV_FILE'; cd '$CODE_DIR'; '$VENV/bin/python' manage.py collectstatic --noinput --clear"
+cp "$SRC/compose.yaml" "$APP_DIR/compose.yaml"
+cat > "$APP_DIR/.env" <<EOF
+# Written by backend/deploy/setup.sh on every deploy: which images run, and the domain.
+IMAGE_REGISTRY=$REGISTRY/
+IMAGE_TAG=$IMAGE_TAG
+SITE_DOMAIN=$SITE_DOMAIN
+EOF
 
-echo "== Services"
-cp "$CODE_DIR"/deploy/systemd/*.service "$CODE_DIR"/deploy/systemd/*.timer /etc/systemd/system/
-systemctl daemon-reload
-# Fetch now rather than wait for the timer, so a fresh box has data straight away.
-systemctl start data-jockey-snapshot.service
-systemctl enable --now data-jockey-snapshot.timer
-systemctl enable data-jockey-web.service
-systemctl restart data-jockey-web.service
+echo "== Images ($IMAGE_TAG)"
+# The AWS CLI snap (installed by scripts/deploy.sh's command) uses the instance role.
+/snap/bin/aws ecr get-login-password --region "$REGION" \
+  | docker login --username AWS --password-stdin "$REGISTRY"
+"${COMPOSE[@]}" pull --quiet
 
-cp "$CODE_DIR/deploy/Caddyfile" /etc/caddy/Caddyfile
-caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-systemctl enable caddy
-systemctl reload-or-restart caddy
+echo "== Retiring the pre-Docker setup (if it's here)"
+# Until 24 Nov the site ran from a venv under systemd behind a host Caddy. Their state
+# moves into the volumes (the admin users' database, the current snapshot, so the site has
+# data straight away); then the old services, Caddy package, user and files go.
+old_code=$APP_DIR/backend
+if [ -d "$old_code" ]; then
+  for unit in data-jockey-web.service data-jockey-snapshot.timer data-jockey-snapshot.service caddy.service; do
+    systemctl disable --now "$unit" 2>/dev/null || true
+  done
+  rm -f /etc/systemd/system/data-jockey-web.service /etc/systemd/system/data-jockey-snapshot.*
+  systemctl daemon-reload
+  # Creates the volumes (labelled as the project's) without starting anything.
+  "${COMPOSE[@]}" create --no-build
+  volume_dir() {
+    docker volume inspect --format '{{ .Mountpoint }}' "${PROJECT}_$1"
+  }
+  if [ -f "$old_code/db.sqlite3" ] && [ ! -f "$(volume_dir django-db)/db.sqlite3" ]; then
+    cp "$old_code/db.sqlite3" "$(volume_dir django-db)/"
+  fi
+  if [ -f "$old_code/data/data_jockey.sqlite3" ] && [ ! -f "$(volume_dir snapshot)/data_jockey.sqlite3" ]; then
+    cp "$old_code"/data/data_jockey.sqlite3* "$(volume_dir snapshot)/"
+  fi
+  # The image's app user (uid 1000) owns its data.
+  chown -R 1000:1000 "$(volume_dir django-db)" "$(volume_dir snapshot)"
+  if dpkg -s caddy >/dev/null 2>&1; then
+    apt-get purge -y -q caddy
+    rm -f /etc/apt/sources.list.d/caddy-stable.list /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+  fi
+  rm -rf "$old_code" "$APP_DIR/venv"
+  if id data-jockey >/dev/null 2>&1; then
+    userdel data-jockey
+  fi
+fi
+
+echo "== Snapshot"
+# Fetch now rather than wait for the snapshot container's loop, so a fresh box has data
+# before the check below (one HEAD request when it's already up to date).
+"${COMPOSE[@]}" run --rm --no-deps snapshot python manage.py fetch_snapshot
+
+echo "== Containers"
+# --no-build: the server only runs pulled images. Unchanged containers are left running.
+"${COMPOSE[@]}" up -d --no-build --remove-orphans
+# Old images (earlier tags) would fill the disk over time.
+docker image prune -af --filter "until=24h" >/dev/null
 
 echo "== Check"
 # Straight to gunicorn (it may take a moment to start): Caddy only answers HTTPS for the
 # domain, and its certificate needs DNS pointing here, which a fresh box's new IP may not
 # have yet. scripts/deploy.sh checks the public HTTPS URL afterwards.
-for attempt in $(seq 1 10); do
+status=000
+for attempt in $(seq 1 15); do
   status=$(curl -s -o /dev/null -w '%{http_code}' -H "Host: ${ALLOWED_HOSTS%%,*}" http://127.0.0.1:8000/api/v1/snapshot/ || true)
   if [ "$status" = "200" ]; then
     echo "GET /api/v1/snapshot/ -> 200"
+    "${COMPOSE[@]}" ps --format 'table {{.Service}}\t{{.Image}}\t{{.Status}}'
     exit 0
   fi
   sleep 2
 done
 echo "GET /api/v1/snapshot/ -> $status (expected 200)" >&2
-journalctl -u data-jockey-web.service -n 30 --no-pager >&2
+"${COMPOSE[@]}" ps >&2
+"${COMPOSE[@]}" logs --tail 30 web >&2
 exit 1

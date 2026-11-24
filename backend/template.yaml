@@ -1,10 +1,13 @@
 AWSTemplateFormatVersion: "2010-09-09"
-Description: data-jockey website, one EC2 box running Django (gunicorn) behind Caddy
+Description: data-jockey website, one EC2 box running Django (gunicorn) behind Caddy, in Docker
 
-# The box is set up by scripts/deploy.sh, not by user data: after `sam deploy`
-# it uploads the backend bundle and runs deploy/setup.sh on the instance through
-# SSM Run Command. The same idempotent script sets up a fresh instance and
-# updates a running one, so a replaced instance only needs `./deploy web`.
+# The box is set up by scripts/deploy.sh, not by user data: it pushes the site's
+# images to ECR (glue stack), and after `sam deploy` runs deploy/setup.sh on the
+# instance through SSM Run Command, which installs Docker and runs compose.yaml.
+# The same idempotent script sets up a fresh instance and updates a running one,
+# so a replaced instance only needs `./deploy web`. The containers reach the
+# instance role through IMDSv2, which needs a hop limit of 2: the Ubuntu AMI's
+# default (check MetadataOptions if the AMI changes).
 # No SSH: the security group only opens 80/443; for a shell use
 #   aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-west-2
 
@@ -78,7 +81,7 @@ Resources:
                 Action: s3:GetObject
                 Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/serving/*
               - Sid: ReadBackendBundle
-                # The code bundle scripts/deploy.sh uploads.
+                # The server bundle scripts/deploy.sh uploads (compose.yaml, setup.sh).
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/code/web/*
@@ -220,6 +223,6 @@ Outputs:
     Description: Elastic IP, where the site is served (and the domain's A record points)
     Value: !Ref ElasticIp
   SiteUrl:
-    # Caddy serves only the domain (deploy/Caddyfile); its A records must point at PublicIp.
+    # Caddy serves only the domain (deploy/caddy/Caddyfile); its A records must point at PublicIp.
     Description: The site (HTTPS once the domain's A records point at PublicIp)
     Value: https://mattdixon.uk/
