@@ -37,6 +37,10 @@ def spark(tmp_path_factory):
     # Building every table (model_odds/model_value/scorecard have big plans)
     # ran the default 1g out of heap.
     .config("spark.driver.memory", "2g")
+    # Plan text (for the UI/listeners, built on every action) is uncapped by default, and
+    # on pyspark 3.5.4 the model tables' plans render to more than the 2g heap (OOM in
+    # QueryExecution.explainString). Only the description is cut; results are the same.
+    .config("spark.sql.maxPlanStringLength", "1m")
     .config("spark.sql.shuffle.partitions", "1")
     .config("spark.sql.session.timeZone", "UTC")
     .config("spark.sql.warehouse.dir", str(tmp_path_factory.mktemp("warehouse")))
