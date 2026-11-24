@@ -1,0 +1,47 @@
+# The Glue package: pytest on the fixtures (local Spark). Python 3.11 and pyspark 3.5.4 match
+# Glue 5.0; Spark needs Java (17 is supported by Spark 3.5).
+name: glue
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - glue/**
+      - .github/workflows/glue.yml
+  pull_request:
+    paths:
+      - glue/**
+      - .github/workflows/glue.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: glue
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: glue/requirements-dev.txt
+
+      - run: pip install -r requirements-dev.txt
+
+      - run: pytest

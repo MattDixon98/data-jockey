@@ -1,0 +1,41 @@
+# The crawlers: type-check (there's no test suite). Node 22, as on Lambda.
+name: crawlers
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - crawlers/**
+      - .github/workflows/crawlers.yml
+  pull_request:
+    paths:
+      - crawlers/**
+      - .github/workflows/crawlers.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: crawlers
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: crawlers/package-lock.json
+
+      - run: npm ci
+
+      - run: npm run typecheck

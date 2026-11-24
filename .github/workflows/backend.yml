@@ -1,0 +1,51 @@
+# The website: builds both Docker images exactly as the deploy does (compose.yaml), then
+# runs the API tests and checks the OpenAPI schema inside the web image. The caddy build
+# also type-checks and builds the React app (frontend/: npm run build = tsc + vite).
+# Built for the runner's own platform (amd64); the deploy builds linux/arm64 from the same
+# Dockerfiles. Nothing is pushed: CI has no AWS access.
+name: backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - backend/**
+      - frontend/**
+      - .github/workflows/backend.yml
+  pull_request:
+    paths:
+      - backend/**
+      - frontend/**
+      - .github/workflows/backend.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  images-and-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build the images (web, caddy)
+        run: docker compose --progress plain -f compose.yaml build web caddy
+
+      # Not DEBUG, as on the server; a throwaway secret key so settings load.
+      - name: API tests in the web image
+        run: >-
+          docker compose -f compose.yaml run --rm --no-deps -e DJANGO_SECRET_KEY=ci-only
+          web python manage.py test api
+
+      - name: OpenAPI schema is valid
+        run: >-
+          docker compose -f compose.yaml run --rm --no-deps -e DJANGO_SECRET_KEY=ci-only
+          web python manage.py spectacular --validate --fail-on-warn --file /tmp/openapi.yaml

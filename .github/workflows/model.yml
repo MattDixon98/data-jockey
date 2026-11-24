@@ -1,0 +1,37 @@
+# Model training: pytest on synthetic races. Runs in a python:3.9 container because the Glue
+# Python shell job runs 3.9 (the package must stay 3.9-compatible).
+name: model
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - model/**
+      - .github/workflows/model.yml
+  pull_request:
+    paths:
+      - model/**
+      - .github/workflows/model.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pytest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    container: python:3.9-slim
+    defaults:
+      run:
+        working-directory: model
+    steps:
+      - uses: actions/checkout@v7
+
+      - run: pip install --no-cache-dir -r requirements-dev.txt
+
+      - run: pytest
