@@ -12,7 +12,7 @@ the subproject directory.
 | `crawlers/` | Daily scraper Lambda → raw S3 bucket     | TypeScript, Node 22, AWS SAM   | Deployed      |
 | `glue/`     | Raw JSON → clean Iceberg tables          | PySpark 3.5.4 (Glue 5.0), SAM  | In progress   |
 | `model/`    | Monthly training of the win-odds weights | Python 3.9 (Glue Python shell), numpy/scipy, SAM | In progress |
-| `backend/`  | Website + API                            | Django 5.2, DRF, Strawberry GraphQL; EC2, SAM | REST (main) + GraphQL APIs, server stack in progress |
+| `backend/`  | Website + API                            | Django 5.2, DRF, Strawberry GraphQL; Docker on EC2, ECR, SAM | REST (main) + GraphQL APIs, server stack in progress |
 | `dashboard/` | Streamlit charts over the REST API       | Streamlit, pandas, requests    | Local only    |
 
 ## Commands
@@ -62,10 +62,15 @@ python manage.py runserver        # GraphiQL at /graphql/, REST at /api/v1/ (Swa
 python manage.py test api         # both APIs' tests (in-memory snapshot, no real file needed)
 python manage.py export_schema api.graphql.schema   # print the GraphQL SDL
 python manage.py spectacular --validate --file openapi.yaml   # write + check the REST OpenAPI schema
-./scripts/deploy.sh               # bundle backend/ to S3, sam deploy, run deploy/setup.sh on the box via SSM
+docker compose up --build         # the whole site in Docker, as on the server: https://localhost/ (Caddy's local CA)
+docker compose run --rm --no-deps web python manage.py test api   # the tests inside the web image
+./scripts/push_images.sh          # build the linux/arm64 images, push to ECR tagged with the commit (deploy.sh runs it)
+./scripts/deploy.sh               # push images, sam deploy, run deploy/setup.sh on the box via SSM (Docker, compose up)
 aws ssm start-session --target <InstanceId> --profile data-jockey --region eu-west-2   # shell on the server (no SSH)
+# On the box: sudo docker compose -f /opt/data-jockey/compose.yaml ps | logs -f web | exec web python manage.py ...
 # Django admin (not public: Caddy 404s /admin): tunnel to gunicorn, then http://localhost:8000/admin/ (unstyled:
-# Caddy serves /static/). Users live in the box's db.sqlite3 (createsuperuser over the shell; gone after web-kill)
+# Caddy serves /static/). Users live in the django-db volume (`... exec web python manage.py createsuperuser` on
+# the box; gone after web-kill)
 aws ssm start-session --target <InstanceId> --document-name AWS-StartPortForwardingSession \
   --parameters portNumber=8000,localPortNumber=8000 --profile data-jockey --region eu-west-2
 ```
@@ -102,20 +107,31 @@ streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (de
    `run_local.py` writes the same file locally.
 5. **Website** ([backend/](backend/)): the `racing` app's models are unmanaged and routed
    (`racing/routers.py`) to a second database, `snapshot`, opened `mode=ro` with `CONN_MAX_AGE=0`.
-   `manage.py fetch_snapshot` (systemd timer every 15 min, `backend/deploy/systemd/`) checks the S3 ETag,
+   `manage.py fetch_snapshot` (the `snapshot` container, every 15 min, `backend/compose.yaml`) checks the S3 ETag,
    downloads to a temp file, checks it and `os.replace`s it in: no restart, each request opens the current file.
    Both APIs live in `api/` and sit on those models: GraphQL (`api/graphql/`, Strawberry, `/graphql/`) and REST
    (`api/rest/`, DRF, `/api/v1/`), both through `api/queries.py`; see "APIs" below.
    **Server** (`backend/template.yaml`, stack `data-jockey-web`): one EC2 t4g.micro (Ubuntu 24.04, AMI pinned in
    samconfig) with an Elastic IP, ports 80/443 only, no SSH, `CPUCredits: standard` (load can't add cost); the stack also
    holds the account-wide $30/month budget (`data-jockey-monthly`, email from SSM `/data-jockey/alert-email`), whose
-   action stops the instance at 100% actual spend. No user data: `scripts/deploy.sh` uploads the bundle and
-   runs the idempotent [deploy/setup.sh](backend/deploy/setup.sh) through SSM Run Command, which sets up a fresh box or
-   updates a running one (code in `/opt/data-jockey/backend`, venv beside it, settings in `/etc/data-jockey/env`,
-   rewritten every deploy except the generated secret key; gunicorn on 127.0.0.1:8000 behind Caddy).
+   action stops the instance at 100% actual spend.
+   **Docker:** the site is three containers ([backend/compose.yaml](backend/compose.yaml)): `web` (Django under gunicorn,
+   [backend/Dockerfile](backend/Dockerfile); also published on the host's 127.0.0.1:8000 for the admin tunnel),
+   `snapshot` (same image, the fetch loop) and `caddy` ([deploy/caddy/](backend/deploy/caddy/): multi-stage, builds the
+   React app and copies Django's collectstatic output from the web image, so both are baked in). Volumes: `snapshot`,
+   `django-db` (admin users, sessions; `DJANGO_DB_PATH`), `caddy-data` (certificates: keep it). `compose.override.yaml`
+   is local only (`.env`, `./data` bind-mounted, `~/.aws` read-only). Images are built for linux/arm64 and pushed to
+   ECR (`data-jockey-web`, `data-jockey-caddy`, in the **glue** stack so web-kill keeps them; last 5 kept, scanned on
+   push) by `scripts/push_images.sh`, tagged with the git commit (`-dirty` with uncommitted changes in backend/ or
+   frontend/), without attestations (one image per push). No user data: `scripts/deploy.sh` pushes the images, uploads
+   `compose.yaml` + `setup.sh` and runs the idempotent [deploy/setup.sh](backend/deploy/setup.sh) through SSM Run
+   Command, which sets up a fresh box or updates a running one: Docker from Docker's apt repo (logs capped), settings in
+   `/etc/data-jockey/env` (rewritten every deploy except the generated secret key), `/opt/data-jockey/compose.yaml` +
+   its `.env` (registry, tag, domain), pull, fetch the snapshot, `compose up`. Containers get AWS credentials from the
+   instance role via IMDSv2, which needs hop limit 2 (the AMI's default).
    Domain **mattdixon.uk** (Porkbun DNS, A records for it and `www` → the Elastic IP; update them after web-kill +
    web-start): Caddy serves only the domain, gets the Let's Encrypt certificate itself and redirects www and HTTP.
-   The domain is set in `deploy/Caddyfile` and `scripts/deploy.sh` (`SITE_DOMAIN`, also Django's `ALLOWED_HOSTS`).
+   The domain is set once, `SITE_DOMAIN` in `scripts/deploy.sh` (Caddy's site via compose, and Django's `ALLOWED_HOSTS`).
    A new snapshot column = DDL + a model field (+ a type field to expose it); a layout change the site must know about = bump
    `serving.FORMAT_VERSION` and `SNAPSHOT_FORMAT_VERSION` in settings together (fetch refuses a mismatch).
 
