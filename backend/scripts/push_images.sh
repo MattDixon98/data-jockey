@@ -37,10 +37,12 @@ export DOCKER_DEFAULT_PLATFORM=linux/arm64
 echo "== Building $tag (linux/arm64)"
 # --pull: always start from the newest python/caddy/node base images, so OS security fixes
 # (ECR's scan on push lists what's left) reach the server with the next deploy.
-docker compose -f compose.yaml build --pull web caddy
+# --progress plain: deploy.sh pipes this script's output through tee, and compose's
+# interactive progress display fails when stdout isn't a terminal ("failed to get console").
+docker compose --progress plain -f compose.yaml build --pull web caddy
 
 echo "== Pushing"
-docker compose -f compose.yaml push web caddy
+docker compose --progress plain -f compose.yaml push web caddy
 
 echo "Pushed ${registry}/data-jockey-web:$tag and ${registry}/data-jockey-caddy:$tag"
 echo "IMAGE_TAG=$tag"

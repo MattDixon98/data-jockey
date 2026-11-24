@@ -3,22 +3,25 @@
 #
 #   ./scripts/deploy.sh        (from backend/)
 #
-# 0. Builds the React frontend (../frontend, npm run build) and uploads it beside the bundle.
-# 1. Bundles backend/ (tracked and new files, nothing git-ignored: no .env, no
-#    snapshot, no db.sqlite3) to s3://data-jockey-clean-<account>/code/web/.
-# 2. `sam deploy` (instance, Elastic IP, role, security group).
-# 3. Runs deploy/setup.sh on the instance through SSM Run Command, which sets up
-#    a fresh box or updates a running one, then checks the site answers.
+# 1. Builds the site's images (web, caddy: Django, the React app, Caddy) for
+#    linux/arm64 and pushes them to ECR, tagged with the git commit
+#    (scripts/push_images.sh).
+# 2. Uploads the server bundle (compose.yaml + deploy/setup.sh) to
+#    s3://data-jockey-clean-<account>/code/web/.
+# 3. `sam deploy` (instance, Elastic IP, role, security group).
+# 4. Runs deploy/setup.sh on the instance through SSM Run Command, which sets up
+#    a fresh box or updates a running one (Docker, pull, compose up), then checks
+#    the site answers.
 #
-# Needs the data-jockey-glue stack (it owns the clean bucket the bundle goes to
-# and the snapshot the site serves).
+# Needs the data-jockey-glue stack (it owns the ECR repositories, the clean bucket
+# the bundle goes to and the snapshot the site serves).
 set -euo pipefail
 
 PROFILE=data-jockey
 REGION=eu-west-2
 STACK=data-jockey-web
 # The site's domain (Porkbun; A records for it and www point at the Elastic IP).
-# Also in deploy/Caddyfile.
+# Passed to Caddy as SITE_DOMAIN (deploy/caddy/Caddyfile).
 SITE_DOMAIN=mattdixon.uk
 AWS=(aws --profile "$PROFILE" --region "$REGION")
 # No pager: AWS CLI v2 pipes long output (setup.sh's log) into less, which stalls the deploy at a ':' prompt.
@@ -27,24 +30,25 @@ export AWS_PAGER=""
 cd "$(dirname "$0")/.."
 
 account_id=$("${AWS[@]}" sts get-caller-identity --query Account --output text)
-bundle_uri="s3://data-jockey-clean-${account_id}/code/web/backend.tar.gz"
+registry="${account_id}.dkr.ecr.${REGION}.amazonaws.com"
+bundle_uri="s3://data-jockey-clean-${account_id}/code/web/bundle.tar.gz"
 snapshot_uri="s3://data-jockey-clean-${account_id}/serving/data_jockey.sqlite3"
 
-echo "== Bundling backend/"
 build_dir=$(mktemp -d)
 trap 'rm -rf "$build_dir"' EXIT
-# Paths relative to backend/, so deploy/setup.sh sits at deploy/setup.sh in the bundle.
-git ls-files --cached --others --exclude-standard -z . > "$build_dir/files"
-tar -czf "$build_dir/backend.tar.gz" --null -T "$build_dir/files"
-"${AWS[@]}" s3 cp "$build_dir/backend.tar.gz" "$bundle_uri" --only-show-errors
-echo "Uploaded $(tr -cd '\0' < "$build_dir/files" | wc -c) files to $bundle_uri"
 
-echo "== Building the frontend"
-# The React app (../frontend) is built here and shipped as plain files; the box has no Node.
-(cd ../frontend && npm ci --silent && npm run build)
-tar -czf "$build_dir/site.tar.gz" -C ../frontend/dist .
-site_uri="s3://data-jockey-clean-${account_id}/code/web/site.tar.gz"
-"${AWS[@]}" s3 cp "$build_dir/site.tar.gz" "$site_uri" --only-show-errors
+echo "== Images"
+./scripts/push_images.sh | tee "$build_dir/push.log"
+image_tag=$(sed -n 's/^IMAGE_TAG=//p' "$build_dir/push.log" | tail -n 1)
+if [ -z "$image_tag" ]; then
+  echo "push_images.sh didn't print IMAGE_TAG=<tag>" >&2
+  exit 1
+fi
+
+echo "== Uploading the server bundle"
+# Everything else (code, React app, Caddyfile) is in the images.
+tar -czf "$build_dir/bundle.tar.gz" compose.yaml deploy/setup.sh
+"${AWS[@]}" s3 cp "$build_dir/bundle.tar.gz" "$bundle_uri" --only-show-errors
 
 echo "== Deploying the $STACK stack"
 sam deploy
@@ -71,26 +75,23 @@ for attempt in $(seq 1 60); do
   sleep 5
 done
 
-echo "== Running deploy/setup.sh on $instance_id"
-# The AWS CLI isn't on Ubuntu's AMI; the snap is AWS's own build.
-python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$SITE_DOMAIN,localhost" "$REGION" "$site_uri" <<'EOF'
+echo "== Running deploy/setup.sh on $instance_id ($image_tag)"
+# The AWS CLI isn't on Ubuntu's AMI; the snap is AWS's own build (setup.sh uses it for ECR too).
+python3 - "$build_dir/command.json" "$bundle_uri" "$snapshot_uri" "$SITE_DOMAIN,localhost" "$REGION" \
+  "$SITE_DOMAIN" "$registry" "$image_tag" <<'EOF'
 import json
 import sys
 
 # Django sees the bare domain through Caddy (which redirects www and drops requests to the IP),
 # and localhost through the SSM tunnel to the admin (Caddy never forwards Host: localhost).
-path, bundle_uri, snapshot_uri, allowed_hosts, region, site_uri = sys.argv[1:]
+path, bundle_uri, snapshot_uri, allowed_hosts, region, site_domain, registry, image_tag = sys.argv[1:]
 commands = [
   "set -eu",
   "[ -x /snap/bin/aws ] || snap install aws-cli --classic",
   "work=$(mktemp -d)",
-  f"/snap/bin/aws s3 cp {bundle_uri} $work/backend.tar.gz --region {region} --only-show-errors",
-  "mkdir $work/backend",
-  "tar -xzf $work/backend.tar.gz -C $work/backend",
-  f"/snap/bin/aws s3 cp {site_uri} $work/site.tar.gz --region {region} --only-show-errors",
-  "mkdir $work/backend/site",
-  "tar -xzf $work/site.tar.gz -C $work/backend/site",
-  f"bash $work/backend/deploy/setup.sh $work/backend {snapshot_uri} {allowed_hosts}",
+  f"/snap/bin/aws s3 cp {bundle_uri} $work/bundle.tar.gz --region {region} --only-show-errors",
+  "tar -xzf $work/bundle.tar.gz -C $work",
+  f"bash $work/deploy/setup.sh $work {snapshot_uri} {allowed_hosts} {site_domain} {registry} {image_tag}",
   "rm -rf $work",
 ]
 with open(path, "w") as out:
@@ -143,7 +144,7 @@ else
     echo "GET https://$SITE_DOMAIN/api/v1/snapshot/ -> 200"
   else
     echo "WARNING: https://$SITE_DOMAIN/api/v1/snapshot/ -> $status; the certificate may still be on its way" >&2
-    echo "  (journalctl -u caddy on the box via SSM)" >&2
+    echo "  (docker compose -f /opt/data-jockey/compose.yaml logs caddy, on the box via SSM)" >&2
   fi
 fi
 
