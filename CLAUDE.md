@@ -128,7 +128,7 @@ streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (de
    is local only (`.env`, `./data` bind-mounted, `~/.aws` read-only). Images are built for linux/arm64 and pushed to
    ECR (`data-jockey-web`, `data-jockey-caddy`, in the **glue** stack so web-kill keeps them; last 5 kept, scanned on
    push) by `scripts/push_images.sh`, tagged with the git commit (`-dirty` with uncommitted changes in backend/ or
-   frontend/), without attestations (one image per push). No user data: `scripts/deploy.sh` pushes the images, uploads
+   frontend/), without attestations (`BUILDX_NO_DEFAULT_ATTESTATIONS`: one image per push). No user data: `scripts/deploy.sh` pushes the images, uploads
    `compose.yaml` + `setup.sh` and runs the idempotent [deploy/setup.sh](backend/deploy/setup.sh) through SSM Run
    Command, which sets up a fresh box or updates a running one: Docker from Docker's apt repo (logs capped), settings in
    `/etc/data-jockey/env` (rewritten every deploy except the generated secret key), `/opt/data-jockey/compose.yaml` +

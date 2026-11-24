@@ -33,6 +33,11 @@ export IMAGE_TAG="$tag"
 # Compose builds every service for this platform (the frontend's Node stage still
 # runs natively: it's pinned to $BUILDPLATFORM).
 export DOCKER_DEFAULT_PLATFORM=linux/arm64
+# No attestations: a push is then one tagged image in ECR, not an index plus two untagged
+# manifests (which the keep-the-last-5 lifecycle rule would count, and could expire from
+# under the tag). Set here rather than as provenance/sbom in compose.yaml, which older
+# Compose versions (GitHub's runners) reject.
+export BUILDX_NO_DEFAULT_ATTESTATIONS=1
 
 echo "== Building $tag (linux/arm64)"
 # --pull: always start from the newest python/caddy/node base images, so OS security fixes
