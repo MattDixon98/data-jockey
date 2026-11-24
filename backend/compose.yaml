@@ -7,8 +7,11 @@
 # local snapshot, your AWS profile). On the server only this file is used.
 #
 # Settings: Django's come from /etc/data-jockey/env on the server (written by
-# deploy/setup.sh) or backend/.env locally (the override). SITE_DOMAIN and IMAGE_TAG
-# are read from the shell or from compose's own .env beside this file.
+# deploy/setup.sh) or backend/.env locally (the override). SITE_DOMAIN, IMAGE_REGISTRY
+# and IMAGE_TAG are read from the shell or from compose's own .env beside this file;
+# unset, the images are the local data-jockey-web:local and data-jockey-caddy:local.
+# scripts/push_images.sh sets IMAGE_REGISTRY (ECR, with a trailing /) and IMAGE_TAG
+# (the git commit) to build and push the server's linux/arm64 images.
 name: data-jockey
 
 x-django-settings: &django-settings
@@ -22,8 +25,14 @@ x-django-settings: &django-settings
 
 services:
   web:
-    build: .
-    image: data-jockey-web:${IMAGE_TAG:-local}
+    build:
+      context: .
+      # No attestations: a push is then one tagged image in ECR, not an index plus two
+      # untagged manifests (which the keep-the-last-5 lifecycle rule would count, and could
+      # expire from under the tag).
+      provenance: false
+      sbom: false
+    image: ${IMAGE_REGISTRY:-}data-jockey-web:${IMAGE_TAG:-local}
     <<: *django-settings
     volumes:
       - snapshot:/app/data
@@ -43,7 +52,7 @@ services:
     restart: unless-stopped
 
   snapshot:
-    image: data-jockey-web:${IMAGE_TAG:-local}
+    image: ${IMAGE_REGISTRY:-}data-jockey-web:${IMAGE_TAG:-local}
     <<: *django-settings
     # fetch_snapshot checks the S3 ETag (one HEAD request) and only downloads a changed
     # file, swapping it in with os.replace: web picks it up on the next request.
@@ -65,7 +74,10 @@ services:
       additional_contexts:
         frontend: ../frontend
         web: service:web
-    image: data-jockey-caddy:${IMAGE_TAG:-local}
+      # As for web: one tagged image per push.
+      provenance: false
+      sbom: false
+    image: ${IMAGE_REGISTRY:-}data-jockey-caddy:${IMAGE_TAG:-local}
     environment:
       SITE_DOMAIN: ${SITE_DOMAIN:-localhost}
     ports:

@@ -82,6 +82,21 @@ Resources:
                 Effect: Allow
                 Action: s3:GetObject
                 Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/code/web/*
+              - Sid: EcrLogin
+                # docker login to ECR (the token isn't tied to a repository).
+                Effect: Allow
+                Action: ecr:GetAuthorizationToken
+                Resource: "*"
+              - Sid: PullWebImages
+                # The site's images (glue stack, pushed by scripts/push_images.sh); pull only.
+                Effect: Allow
+                Action:
+                  - ecr:BatchGetImage
+                  - ecr:GetDownloadUrlForLayer
+                  - ecr:BatchCheckLayerAvailability
+                Resource:
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/data-jockey-web
+                  - !Sub arn:aws:ecr:${AWS::Region}:${AWS::AccountId}:repository/data-jockey-caddy
 
   InstanceProfile:
     Type: AWS::IAM::InstanceProfile
