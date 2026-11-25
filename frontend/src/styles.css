@@ -166,7 +166,7 @@ select {
 .swatch.market { border-color: var(--muted); border-top-style: dashed; }
 .chart-wrap { position: relative; margin-top: 8px; }
 .chart { display: block; width: 100%; height: auto; touch-action: pan-y; }
-.chart text { fill: var(--muted); font-size: 12px; }
+.chart text { fill: var(--muted); font-size: 13px; }
 .chart .axis { stroke: var(--line); }
 .chart .axis.zero { stroke: var(--muted); stroke-opacity: 0.6; }
 .chart .cursor { stroke: var(--muted); stroke-dasharray: 2 3; }

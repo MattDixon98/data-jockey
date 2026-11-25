@@ -1,7 +1,7 @@
 // Top-pick ROI over time: 1 unit per race at SP on our favourite vs the market's,
 // from the daily scorecard rows (period_type=day). A plain SVG chart, no chart library.
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import { signedPercent } from "./format";
 import type { ScorecardRow } from "./types";
@@ -53,6 +53,19 @@ export function roiByDay(rows: ScorecardRow[], cumulative: boolean): RoiPoint[] 
   }));
 }
 
+/**
+ * The last 12 months of points (days after the same date a year before the last day):
+ * the chart is a rolling year once there's more than that. Cumulative values keep
+ * counting from the first day, only the display is cut.
+ */
+export function lastYear(points: RoiPoint[]): RoiPoint[] {
+  if (!points.length) return points;
+  const start = new Date(`${points[points.length - 1].day}T12:00:00Z`);
+  start.setUTCFullYear(start.getUTCFullYear() - 1);
+  const from = start.toISOString().slice(0, 10);
+  return points.filter((point) => point.day > from);
+}
+
 /** Round tick values (1, 2, 2.5 or 5 × 10^n apart) covering min..max, about `count` of them. */
 function ticks(min: number, max: number, count = 5): number[] {
   const rough = (max - min) / count || 0.01;
@@ -68,14 +81,91 @@ function ticks(min: number, max: number, count = 5): number[] {
 const shortDate = (day: string): string =>
   new Date(`${day}T12:00:00Z`).toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
-const WIDTH = 640;
-const PLOT_HEIGHT = 220;
-const MARGIN = { top: 12, right: 12, left: 52 };
-// Every day gets a date label: level while each has this much room, slanted when they'd collide
-// (the slanted ones need a taller bottom margin).
-const LEVEL_LABEL_WIDTH = 44;
-const LEVEL_BOTTOM = 28;
-const SLANTED_BOTTOM = 48;
+const DAY = 86_400_000;
+// Before the chart has been measured, and the room each x-axis label needs (13px text:
+// "24 Nov" or "Sept 2027", plus a gap). The chart draws at its real width, so text stays
+// 13px on any screen and narrow screens just get fewer labels.
+const FALLBACK_WIDTH = 640;
+const MIN_LABEL_GAP = 64;
+const MAX_LABELS = 12;
+const MARGIN = { top: 12, right: 36, bottom: 28, left: 52 };
+
+/** The width an element is drawn at, kept up to date as it resizes. */
+function useWidth(): [(node: HTMLElement | null) => (() => void) | undefined, number] {
+  const [width, setWidth] = useState(0);
+  const ref = useCallback((node: HTMLElement | null) => {
+    if (!node) return undefined;
+    const observer = new ResizeObserver(([entry]) => setWidth(Math.round(entry.contentRect.width)));
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, width];
+}
+
+interface Tick {
+  time: number;
+  label: string;
+}
+
+// Calendar steps for the x-axis, finest first: every n days from the first day, then
+// the 1st of every n months (Jan-aligned, so 3 months = quarters).
+const DAY_STEPS = [1, 2, 3, 7, 14];
+const MONTH_STEPS = [1, 2, 3, 6, 12];
+
+// "Dec", with the year on January and on the ends ("Nov 2026"), so every year is named.
+const monthLabel = (time: number, withYear = false): string =>
+  new Date(time).toLocaleDateString("en-GB", {
+    month: "short",
+    year: withYear || new Date(time).getUTCMonth() === 0 ? "numeric" : undefined,
+    timeZone: "UTC",
+  });
+
+const monthOf = (time: number): number => new Date(time).getUTCFullYear() * 12 + new Date(time).getUTCMonth();
+
+/** Ticks strictly between tMin and tMax (both at 12:00 UTC) for one calendar step. */
+function innerTicks(tMin: number, tMax: number, step: { days: number } | { months: number }): Tick[] {
+  const ticks: Tick[] = [];
+  if ("days" in step) {
+    for (let time = tMin + step.days * DAY; time < tMax; time += step.days * DAY) {
+      ticks.push({ time, label: shortDate(new Date(time).toISOString().slice(0, 10)) });
+    }
+    return ticks;
+  }
+  const start = new Date(tMin);
+  for (let month = start.getUTCFullYear() * 12 + start.getUTCMonth() + 1; ; month++) {
+    const time = Date.UTC(Math.floor(month / 12), month % 12, 1, 12);
+    if (time >= tMax) break;
+    if (month % step.months === 0) ticks.push({ time, label: monthLabel(time) });
+  }
+  return ticks;
+}
+
+/**
+ * The x-axis labels: always the first and last day, plus the finest calendar step whose
+ * labels have room and that keeps the total within `maxLabels`. A step tick too close to
+ * either end to fit a label is dropped, so the ends can sit a little closer to their
+ * neighbours than the rest. On a month step the ends are months too ("Nov 2026"), and a
+ * step tick in the same month as an end is dropped rather than repeat it.
+ */
+function xTicks(tMin: number, tMax: number, maxLabels: number, x: (time: number) => number): Tick[] {
+  const first = { time: tMin, label: shortDate(new Date(tMin).toISOString().slice(0, 10)) };
+  if (tMax === tMin) return [first];
+  const last = { time: tMax, label: shortDate(new Date(tMax).toISOString().slice(0, 10)) };
+  const steps = [...DAY_STEPS.map((days) => ({ days })), ...MONTH_STEPS.map((months) => ({ months }))];
+  for (const step of steps) {
+    // Months are 28-31 days: 30 is close enough to tell whether their labels fit.
+    const stepDays = "days" in step ? step.days : step.months * 30;
+    if (x(tMin + stepDays * DAY) - x(tMin) < MIN_LABEL_GAP) continue;
+    const months = "months" in step;
+    const roomy = (tick: Tick) => x(tick.time) - x(tMin) >= MIN_LABEL_GAP && x(tMax) - x(tick.time) >= MIN_LABEL_GAP;
+    const ownMonth = (tick: Tick) => !months || (monthOf(tick.time) !== monthOf(tMin) && monthOf(tick.time) !== monthOf(tMax));
+    const inner = innerTicks(tMin, tMax, step).filter((tick) => roomy(tick) && ownMonth(tick));
+    if (inner.length + 2 > maxLabels) continue;
+    if (!months) return [first, ...inner, last];
+    return [{ time: tMin, label: monthLabel(tMin, true) }, ...inner, { time: tMax, label: monthLabel(tMax, true) }];
+  }
+  return [first, last];
+}
 
 export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulative: boolean }) {
   // The hovered day stays set after the pointer leaves, so the cursor and tooltip
@@ -83,6 +173,7 @@ export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulativ
   const [hovered, setHovered] = useState(Number.MAX_SAFE_INTEGER);
   const [active, setActive] = useState(false);
   const [pointer, setPointer] = useState(0);
+  const [wrapRef, measured] = useWidth();
   const values = points.flatMap((point) => [point.model, point.market]).filter((v): v is number => v !== null);
   if (!points.length || !values.length) return <p className="muted">No daily results yet.</p>;
 
@@ -93,13 +184,18 @@ export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulativ
   const yMax = yTicks[yTicks.length - 1];
   const times = points.map((point) => Date.parse(`${point.day}T12:00:00Z`));
   const tMin = times[0];
-  const tSpan = times[times.length - 1] - tMin || 1;
+  const tMax = times[times.length - 1];
+  const tSpan = tMax - tMin || 1;
+  const WIDTH = measured || FALLBACK_WIDTH;
   const plotWidth = WIDTH - MARGIN.left - MARGIN.right;
-  const plotHeight = PLOT_HEIGHT;
-  const slanted = points.length > 1 && plotWidth / (points.length - 1) < LEVEL_LABEL_WIDTH;
-  const HEIGHT = MARGIN.top + plotHeight + (slanted ? SLANTED_BOTTOM : LEVEL_BOTTOM);
+  // Shorter on phones, so the lines don't flatten out on a wide screen or tower on a narrow one.
+  const plotHeight = Math.round(Math.min(280, Math.max(180, WIDTH * 0.32)));
+  const HEIGHT = MARGIN.top + plotHeight + MARGIN.bottom;
   const axisY = MARGIN.top + plotHeight;
-  const x = (i: number) => MARGIN.left + (points.length > 1 ? ((times[i] - tMin) / tSpan) * plotWidth : plotWidth / 2);
+  const xAt = (time: number) => MARGIN.left + (tMax > tMin ? ((time - tMin) / tSpan) * plotWidth : plotWidth / 2);
+  const x = (i: number) => xAt(times[i]);
+  const maxLabels = Math.min(MAX_LABELS, Math.floor(plotWidth / MIN_LABEL_GAP) + 1);
+  const labels = xTicks(tMin, tMax, maxLabels, xAt);
   const y = (value: number) => MARGIN.top + ((yMax - value) / (yMax - yMin || 1)) * plotHeight;
 
   const path = (line: Line) =>
@@ -144,7 +240,7 @@ export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulativ
           </span>
         ))}
       </div>
-      <div className="chart-wrap">
+      <div className="chart-wrap" ref={wrapRef}>
         <svg
           className="chart"
           viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
@@ -167,23 +263,14 @@ export function RoiChart({ points, cumulative }: { points: RoiPoint[]; cumulativ
               </text>
             </g>
           ))}
-          {points.map((point, i) => {
-            const level = slanted ? null : i === 0 && points.length > 1 ? "start" : i === points.length - 1 && i > 0 ? "end" : "middle";
-            return (
-              <g key={point.day}>
-                <line x1={x(i)} x2={x(i)} y1={axisY} y2={axisY + 4} className="axis" />
-                {level ? (
-                  <text x={x(i)} y={axisY + 18} textAnchor={level}>
-                    {shortDate(point.day)}
-                  </text>
-                ) : (
-                  <text x={x(i)} y={axisY + 10} dy="0.32em" textAnchor="end" transform={`rotate(-45 ${x(i)} ${axisY + 10})`}>
-                    {shortDate(point.day)}
-                  </text>
-                )}
-              </g>
-            );
-          })}
+          {labels.map((tick) => (
+            <g key={tick.time}>
+              <line x1={xAt(tick.time)} x2={xAt(tick.time)} y1={axisY} y2={axisY + 4} className="axis" />
+              <text x={xAt(tick.time)} y={axisY + 18} textAnchor="middle">
+                {tick.label}
+              </text>
+            </g>
+          ))}
           <line
             y1={MARGIN.top}
             y2={MARGIN.top + plotHeight}

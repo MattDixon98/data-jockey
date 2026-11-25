@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useDailyScorecard, useScorecard } from "../api";
 import { Status } from "../components";
 import { percent, signedPercent } from "../format";
-import { RoiChart, roiByDay } from "../roi";
+import { RoiChart, lastYear, roiByDay } from "../roi";
 
 export default function Scorecard() {
   const query = useScorecard();
@@ -103,7 +103,9 @@ function TopPickRoi() {
     (a, b) => Number(a !== "all") - Number(b !== "all") || a.localeCompare(b),
   );
   const dayRows = rows.filter((row) => row.race_group === group);
-  const races = dayRows.reduce((total, row) => total + row.races, 0);
+  const allPoints = roiByDay(dayRows, cumulative);
+  const points = lastYear(allPoints);
+  const races = points.reduce((total, point) => total + point.races, 0);
 
   return (
     <section className="panel">
@@ -135,10 +137,11 @@ function TopPickRoi() {
         />
       </div>
       <Status query={query}>
-        <RoiChart points={roiByDay(dayRows, cumulative)} cumulative={cumulative} />
-        {dayRows.length > 0 && (
+        <RoiChart points={points} cumulative={cumulative} />
+        {points.length > 0 && (
           <p className="muted small">
-            {races} races over {dayRows.length} race days.
+            {races} races over {points.length} race days
+            {points.length < allPoints.length ? ", the last 12 months" : ""}.
           </p>
         )}
       </Status>
