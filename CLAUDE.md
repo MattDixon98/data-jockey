@@ -157,7 +157,10 @@ streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (de
   via `meetings_flat`/`card_races`/`rides`) live in `utilities.py`. A new table = a new module plus
   an entry in `build_all()` in `__init__.py`. `build_all()` first keeps only each race's most trusted file
   (`race_files()`; **past > today > t-1 > t-2 > t-3**, `conversions.snapshot_rank`) and each date's
-  most trusted racecard, so entries dropped between snapshots don't linger. Results
+  most trusted racecard, so entries dropped between snapshots don't linger. `build_all(keep=build.checkpoint)`
+  (job, run_local, test fixtures) localCheckpoints every table others are built from, so the model tables plan from
+  there, not from the raw JSON (their plans grow with each promoted model; without it two models ran the driver out
+  of memory). The default `keep=cache` stays lazy. A new shared intermediate goes through `keep`. Results
   (finish_position, non_finisher_reason, winning_time) only ever come from past (`from_past()`).
   Then each table is de-duplicated on its key with `latest()` (most recent race wins; for names,
   most recent non-null). `races` and `runners` carry a `snapshot` column.
