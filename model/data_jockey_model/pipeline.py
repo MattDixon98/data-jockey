@@ -3,19 +3,20 @@
 1. Clean the rows (one winner, 2+ runners) and drop the warm-up weeks, when
    jockey and trainer rates had almost no history behind them.
 2. Split by date: train, then validate (the next two weeks), then test (the
-   last two weeks). Never shuffled: the model is always judged on races after
+   last four weeks). Never shuffled: the model is always judged on races after
    the ones it learnt from, as it will be when it prices tomorrow's races.
 3. Pick the penalty: fit on train with each L2 value, keep the one with the
    lowest log-loss on validate.
 4. Test: fit on train + validate with that penalty and score the test weeks.
-   The current model (if any) is scored on the same weeks.
-5. Decide: the candidate is promoted if it beats the current model on test
-   (or if there is no current model).
+5. Decide: the current model's inputs go through steps 3-4 on the same split
+   (refit, not its stored weights, which may have been trained on some of the
+   test weeks). The candidate is promoted unless the current inputs score
+   better on test; the same inputs tie, and the newer data wins.
 6. Refit on every usable race with that penalty: those are the published
    weights. The test numbers describe how well the method works.
 
-`compare()` runs steps 1-4 for any two sets of inputs on the same split:
-scripts/train_local.py's --add/--drop, to try a change locally.
+`compare()` runs steps 1-4 for any two sets of inputs: the promotion check
+above, and scripts/train_local.py's --add/--drop to try a change locally.
 
 Models are plain dicts (the weights JSON): each input's name, SQL, mean,
 spread and weight, plus the penalty, date range and test scores.
@@ -35,7 +36,8 @@ from data_jockey_model.fit import Races, Standardiser, fit_weights, win_probabil
 
 WARMUP_DAYS = 21
 VALIDATE_DAYS = 14
-TEST_DAYS = 14
+# Four weeks: ~800 races, so a difference between two models is measurable.
+TEST_DAYS = 28
 # Wide enough that the chosen value lands inside the range, not at an end.
 L2_GRID = [0.001, 0.01, 0.03, 0.1, 0.3, 1.0, 3.0]
 
@@ -193,14 +195,16 @@ def train(
   created_at: str,
 ) -> TrainingResult:
   split = prepare(raw_rows)
-  candidate, test_races = fit_and_test(split, inputs, aliases)
 
-  current_scores = None
-  if current is not None:
-    current_probs, _ = model_probabilities(current, split.test, aliases)
-    sp_decimal = split.test["sp_decimal"].to_numpy(dtype=float)
-    current_scores = evaluate.scorecard(current_probs, sp_decimal, test_races)
-  promote = current_scores is None or candidate.scores["log_loss"] < current_scores["log_loss"]
+  comparison = None
+  if current is None:
+    candidate, _ = fit_and_test(split, inputs, aliases)
+    promote = True
+  else:
+    current_inputs = {item["name"]: item["sql"] for item in current["inputs"]}
+    comparison = compare_on(split, current_inputs, inputs, aliases)
+    candidate = comparison.variant
+    promote = inputs == current_inputs or comparison.difference["mean"] <= 0
 
   standardiser, weights = fit_model(split.everything, inputs, aliases, candidate.l2)
   model = {
@@ -212,7 +216,7 @@ def train(
     "test": {**date_range(split.test), **{k: v for k, v in candidate.scores.items() if k != "calibration"}},
   }
 
-  report = render_report(model, split, candidate, current, current_scores, promote)
+  report = render_report(model, split, candidate, current, comparison, promote)
   return TrainingResult(model=model, report=report, promote=promote)
 
 
@@ -292,25 +296,22 @@ def render_report(
   split: Split,
   candidate: Tested,
   current: dict | None,
-  current_scores: dict | None,
+  comparison: Comparison | None,
   promote: bool,
 ) -> str:
-  if current is None:
+  if comparison is None:
     decision = "**Promoted**: first model, nothing to beat."
-  elif promote:
-    decision = (
-      f"**Promoted**: test log-loss {candidate.scores['log_loss']:.4f} beats the current model "
-      f"({current['version']}) at {current_scores['log_loss']:.4f}."
-    )
   else:
+    verdict = "**Promoted**" if promote else "**Not promoted**"
     decision = (
-      f"**Not promoted**: test log-loss {candidate.scores['log_loss']:.4f} doesn't beat the current model "
-      f"({current['version']}) at {current_scores['log_loss']:.4f}."
+      f"{verdict}: test log-loss {candidate.scores['log_loss']:.4f} vs {comparison.baseline.scores['log_loss']:.4f} "
+      f"for the current model's inputs ({current['version']}), refitted on the same weeks.\n\n"
+      "Difference: " + describe_difference(comparison.difference, "the current inputs") + "."
     )
 
   columns = [("This model", candidate.scores)]
-  if current_scores is not None:
-    columns.append(("Current model", current_scores))
+  if comparison is not None:
+    columns.append(("Current inputs, refitted", comparison.baseline.scores))
 
   calibration_rows = [
     [band["band"], band["runners"], f"{band['predicted']:.1%}", f"{band['actual']:.1%}"]

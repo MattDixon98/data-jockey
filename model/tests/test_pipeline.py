@@ -68,6 +68,18 @@ def test_model_json_round_trips(small_inputs):
     assert set(item) == {"name", "sql", "mean", "std", "weight"}
 
 
+def test_same_inputs_as_current_tie_and_promote(small_inputs):
+  # The current model is refitted on the same weeks, not scored with its stored
+  # weights, so identical inputs give identical test scores: a tie, which the
+  # newer candidate wins.
+  current = _train(small_inputs).model
+  result = _train(small_inputs, current=current, seed=3)
+  assert result.promote
+  assert "+0.0000 ± 0.0000" in result.report
+  assert "identical" in result.report
+  assert "Current inputs, refitted" in result.report
+
+
 def test_compare_finds_a_dropped_input_hurts(small_inputs):
   aliases = input_aliases(small_inputs)
   rows = make_rows(small_inputs, TRUE_WEIGHTS, aliases)

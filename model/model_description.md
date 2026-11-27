@@ -134,7 +134,7 @@ Training runs automatically once a month on AWS, with a time-based split:
 | The first 3 weeks of data | Nothing (see below) |
 | The next ~6 weeks (train) | Fitting the weights |
 | The 2 weeks after that (validation) | Tuning the penalty strength |
-| The latest 2 weeks (test) | Measuring performance on races it never trained on |
+| The latest 4 weeks (test) | Measuring performance on races it never trained on |
 
 **Why split by time, not at random.** In use, the model always predicts forward from what it has seen. A
 random split would let it train on later races and be tested on earlier ones, which flatters it.
@@ -144,7 +144,11 @@ rates are built from our own collected races, which start on 11 Aug 2026. In the
 jockey sits at the 10% prior, so those weeks would teach the model that jockeys don't matter. We treat the first 3 weeks of data as a warm-up period, which gets left out of the training.
 
 **Refit and promotion.** After testing, the weights are refitted on all the data. Each month's model is
-compared with the one in use on the same recent races; the better of the two is kept. Each run saves its weights and a short report
+compared with the one in use on the same test weeks; the better of the two is kept. The model in use isn't scored
+with its saved weights, which may have been trained on some of those weeks: its inputs are refitted on the same
+train and validation weeks as the new one, so the comparison is between the two sets of inputs on equal terms. The
+report gives the difference race by race with its standard error, saying whether it's beyond noise; the same
+comparison tests a new feature locally before it goes in. Each run saves its weights and a short report
 (dates used, test log-loss against the market and random picks, calibration, every feature's weight).
 
 **No look-ahead in the history.** Upcoming races use the latest model. Past races are recalculated daily but
