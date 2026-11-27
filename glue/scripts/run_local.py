@@ -5,6 +5,7 @@
 --model adds model_odds, priced with that weights JSON (repeat it for several
 models, e.g. files copied from s3://data-jockey-clean-<account>/model/promoted/
 or a training dry run in model/local-runs/). Without it model_odds is skipped.
+--blend adds blended_prob to model_value (and the flag uses it).
 
 Download the raw data first, e.g.:
 
@@ -31,17 +32,21 @@ from pyspark.sql import SparkSession  # noqa: E402
 from pyspark.sql.functions import col  # noqa: E402
 
 from data_jockey import build, raw_schemas, serving  # noqa: E402
-from data_jockey.models import usable_models  # noqa: E402
+from data_jockey.models import check_blend, usable_models  # noqa: E402
 from data_jockey.tables import TABLE_KEYS, TABLES, local_ddl  # noqa: E402
 
 
-def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
+def main(raw_dir: str, out_dir: str, model_files: list[str], blend_file: str | None = None) -> None:
   models = None
   if model_files:
     models = usable_models({path: json.loads(Path(path).read_text()) for path in model_files})
     print(f"Pricing model_odds with {[model['version'] for model in models]}")
   else:
     print("No --model given: skipping model_odds")
+  blend = None
+  if blend_file:
+    blend = check_blend(json.loads(Path(blend_file).read_text()), blend_file)
+    print(f"Blending with {blend['version']}")
 
   out = Path(out_dir).resolve()
   spark = (
@@ -68,7 +73,7 @@ def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
   # Every table as written; tables not built (model ones without --model) stay
   # empty, like the local_schema table of the same name.
   written_tables = {name: spark.table(f"local_schema.{name}") for name in TABLES}
-  for name, df in build.build_all(cards, races, models, keep=build.checkpoint).items():
+  for name, df in build.build_all(cards, races, models, keep=build.checkpoint, blend=blend).items():
     clean = build.conform(df, spark.table(f"local_schema.{name}").schema)
     clean.write.mode("overwrite").parquet(str(out / name))
 
@@ -108,5 +113,6 @@ if __name__ == "__main__":
   parser.add_argument("raw_dir")
   parser.add_argument("out_dir", nargs="?", default="local-tables")
   parser.add_argument("--model", action="append", default=[], help="weights JSON; repeatable")
+  parser.add_argument("--blend", help="blend JSON (model/blend.json or a training dry run's); flags use it")
   args = parser.parse_args()
-  main(args.raw_dir, args.out_dir, args.model)
+  main(args.raw_dir, args.out_dir, args.model, args.blend)

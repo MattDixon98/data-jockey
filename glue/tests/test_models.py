@@ -6,7 +6,7 @@ import json
 import pytest
 
 from conftest import FIXTURES
-from data_jockey.models import ModelError, check_model, date_ranges, usable_models
+from data_jockey.models import ModelError, check_blend, check_model, date_ranges, usable_models
 
 MODEL = json.loads((FIXTURES / "model" / "2026-11-13.json").read_text())
 
@@ -67,3 +67,34 @@ def test_date_ranges_hand_over_when_training_ends():
 
 def test_single_model_prices_everything():
   assert [(after, up_to) for _, after, up_to in date_ranges([MODEL])] == [(None, None)]
+
+
+BLEND = {
+  "version": "2026-12-15",
+  "markets": {
+    "forecast": {"model_weight": 0.48, "market_weight": 0.61},
+    "SP": {"model_weight": 0.0, "market_weight": 1.0},
+  },
+}
+
+
+def test_blend_passes():
+  assert check_blend(copy.deepcopy(BLEND), "s3://bucket/model/blend.json") == BLEND
+
+
+@pytest.mark.parametrize(
+  "break_it, message",
+  [
+    (lambda b: b.pop("version"), "missing 'version'"),
+    (lambda b: b.update(markets={}), "no markets"),
+    (lambda b: b["markets"].update(tote={"model_weight": 1, "market_weight": 1}), "unknown market 'tote'"),
+    (lambda b: b["markets"]["SP"].pop("market_weight"), "SP has no number for 'market_weight'"),
+    (lambda b: b["markets"]["forecast"].update(model_weight="0.5"), "forecast has no number for 'model_weight'"),
+  ],
+)
+def test_broken_blend_says_what_is_wrong(break_it, message):
+  blend = copy.deepcopy(BLEND)
+  break_it(blend)
+  with pytest.raises(ModelError, match="blend.json") as error:
+    check_blend(blend, "s3://bucket/model/blend.json")
+  assert message in str(error.value)

@@ -324,9 +324,12 @@ TABLES: dict[str, str] = {
           book_percentage     DOUBLE  COMMENT 'Sum of 1/odds x 100 before the margin came off, e.g. 118',
           edge                DOUBLE  COMMENT 'model_prob / market_prob - 1',
           expected_value      DOUBLE  COMMENT 'Average return of a 1 unit bet at market_odds if model_prob is right',
-          undervalued         BOOLEAN COMMENT 'expected_value >= 0, model_prob >= 20% and market odds 5/1 or shorter',
+          undervalued         BOOLEAN COMMENT 'EV >= 0, prob >= 20% and 5/1 or shorter, on blended_prob when set, else model_prob',
           won                 BOOLEAN COMMENT 'Once the race is run; NULL before, and for runners that did not run',
-          finish_position     INT
+          finish_position     INT,
+          blend_version       STRING  COMMENT 'Which blend (model/blend.json) gave blended_prob; NULL without one',
+          blended_prob        DOUBLE  COMMENT 'Our probability and the market probability combined, sums to 1 per race and snapshot; the flag uses it when set',
+          blended_expected_value DOUBLE COMMENT 'blended_prob x market decimal odds - 1'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,

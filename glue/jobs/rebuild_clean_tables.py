@@ -40,7 +40,7 @@ from pyspark.context import SparkContext
 from pyspark.sql.functions import lit
 
 from data_jockey import build, raw_schemas, serving, staging
-from data_jockey.models import ModelError, usable_models
+from data_jockey.models import ModelError, check_blend, usable_models
 from data_jockey.tables import TABLES, ddl_columns
 
 CATALOG = "glue_catalog"
@@ -85,6 +85,24 @@ def read_models(location: str) -> list[dict]:
     except json.JSONDecodeError as error:
       raise ModelError(f"{source}: not valid JSON ({error})")
   return usable_models(documents)
+
+
+def read_blend(location: str) -> dict | None:
+  """model/blend.json under `location`, checked; None if there isn't one (not
+  fitted yet, or the last fit didn't beat the market)."""
+  bucket, prefix = location[len("s3://"):].split("/", 1)
+  s3 = boto3.client("s3")
+  key = f"{prefix}blend.json"
+  source = f"s3://{bucket}/{key}"
+  try:
+    body = s3.get_object(Bucket=bucket, Key=key)["Body"].read()
+  except s3.exceptions.NoSuchKey:
+    return None
+  try:
+    blend = json.loads(body)
+  except json.JSONDecodeError as error:
+    raise ModelError(f"{source}: not valid JSON ({error})")
+  return check_blend(blend, source)
 
 
 def list_raw_files(bucket: str) -> dict[str, str]:
@@ -200,6 +218,17 @@ except (ModelError, ClientError) as error:
   model_error = error
   print(f"Models not loaded, model_odds will be skipped: {error}")
 
+# The blend is optional: none yet = the flag uses our probability. A broken
+# one is left out (same as none) and fails the job at the end.
+blend = None
+blend_error = None
+try:
+  blend = read_blend(args["model_location"])
+  print(f"Blend: {blend['version'] if blend else 'none'}")
+except (ModelError, ClientError) as error:
+  blend_error = error
+  print(f"Blend not loaded, flags use our probability: {error}")
+
 db = f"{CATALOG}.{args['database']}"
 
 # Every snapshot (past/, today/ and future/ t-N files), read from the staged
@@ -222,7 +251,7 @@ for name, ddl in TABLES.items():
   if missing:
     raise RuntimeError(f"{db}.{name} is missing DDL columns {missing}: ALTER TABLE ... ADD COLUMNS first")
 
-for name, df in build.build_all(racecards, races, models, keep=build.checkpoint).items():
+for name, df in build.build_all(racecards, races, models, keep=build.checkpoint, blend=blend).items():
   table = f"{db}.{name}"
   clean = build.conform(df, spark.table(table).schema)
   # Full rebuild: replace every row in one commit (the old version stays in
@@ -259,4 +288,9 @@ if model_error is not None:
   raise RuntimeError(
     f"Every table was rebuilt except model_odds, which kept its previous rows: "
     f"the models couldn't be loaded from {args['model_location']}: {model_error}"
+  )
+if blend_error is not None:
+  raise RuntimeError(
+    f"Every table was rebuilt, without the blend (flags used our probability): "
+    f"the blend couldn't be loaded from {args['model_location']}: {blend_error}"
   )

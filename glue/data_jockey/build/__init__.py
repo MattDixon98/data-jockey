@@ -56,12 +56,14 @@ def build_all(
   races_raw: DataFrame,
   models: list[dict] | None = None,
   keep: Callable[[DataFrame], DataFrame] = cache,
+  blend: dict | None = None,
 ) -> dict[str, DataFrame]:
   """Every clean table, keyed by table name (unconformed column order).
 
   `models` are the promoted win-odds models (models.usable_models). Without
   them there are no model tables (model_odds, model_value, model_scorecard,
-  model_calibration), and every other table still builds.
+  model_calibration), and every other table still builds. `blend`
+  (models.check_blend) gives model_value its blended_prob; None = no blend.
 
   Takes the raw reads (with source_file) of every snapshot. Everything but
   odds_snapshots and runner_features use only each race's most trusted file.
@@ -109,6 +111,7 @@ def build_all(
       tables["odds_snapshots"],
       tables["runners"],
       tables["races"],
+      blend,
     ))
     graded = keep(graded_view_rows(tables["model_value"], tables["races"]))
     tables["model_scorecard"] = model_scorecard(graded)

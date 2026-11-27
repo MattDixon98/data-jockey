@@ -719,6 +719,47 @@ def test_model_value_numbers(request, fixture):
     assert row.undervalued == expected_flag
 
 
+def _blended_value(built, markets):
+  blend = {"version": "test-blend", "markets": markets}
+  return model_value(built["model_odds"], built["odds_snapshots"], built["runners"], built["races"], blend).collect()
+
+
+def test_model_value_without_a_blend_flags_on_our_probability(snapshot_tables):
+  for row in snapshot_tables["model_value"].collect():
+    assert row.blended_prob is None and row.blend_version is None and row.blended_expected_value is None
+
+
+def test_blend_of_market_only_is_the_market_and_of_ours_only_is_ours(snapshot_tables):
+  market_only = {"forecast": {"model_weight": 0.0, "market_weight": 1.0}, "SP": {"model_weight": 0.0, "market_weight": 1.0}}
+  for row in _blended_value(snapshot_tables, market_only):
+    assert row.blended_prob == pytest.approx(row.market_prob)
+    assert row.blend_version == "test-blend"
+    # At the market's own (margin-free) probability a bet always loses the margin: never flagged.
+    assert not row.undervalued
+  ours_only = {"forecast": {"model_weight": 1.0, "market_weight": 0.0}, "SP": {"model_weight": 1.0, "market_weight": 0.0}}
+  for row in _blended_value(snapshot_tables, ours_only):
+    assert row.blended_prob == pytest.approx(row.model_prob)
+
+
+def test_blend_sums_to_one_and_only_covers_its_markets(snapshot_tables):
+  rows = _blended_value(snapshot_tables, {"forecast": {"model_weight": 0.48, "market_weight": 0.61}})
+  totals = {}
+  for row in rows:
+    if row.market == "forecast":
+      totals[(row.race_id, row.snapshot)] = totals.get((row.race_id, row.snapshot), 0.0) + row.blended_prob
+      assert row.blended_expected_value == pytest.approx(row.blended_prob * row.market_odds_decimal - 1)
+      flag = (
+        row.blended_expected_value >= MIN_EXPECTED_VALUE
+        and row.blended_prob >= MIN_MODEL_PROB
+        and row.market_odds_decimal <= MAX_MARKET_ODDS_DECIMAL
+      )
+      assert row.undervalued == flag
+    else:
+      # No SP weights: SP rows keep flagging on our probability.
+      assert row.blended_prob is None and row.blend_version is None
+  assert totals and all(total == pytest.approx(1.0) for total in totals.values())
+
+
 def test_model_value_grades_every_snapshot_once_run(snapshot_tables):
   """948004 has been run: Fratas (awarded the race) won at every snapshot; the
   late non-runner Mastertown Miss had a t-1 price but no result (bet void).

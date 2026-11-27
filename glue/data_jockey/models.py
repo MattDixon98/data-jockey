@@ -64,3 +64,26 @@ def date_ranges(models: list[dict]) -> list[tuple[dict, str | None, str | None]]
     up_to = None if is_last else models[index + 1]["trained_on"]["to"]
     ranges.append((model, after, up_to))
   return ranges
+
+
+# The blend (model/ subproject, blend.py): our probability and the market's
+# combined per race, score = model_weight x ln(ours) + market_weight x ln(market),
+# fitted per market on out-of-sample races. model/blend.json only exists while
+# a fitted blend beats the market; without it the flag uses our probability.
+BLEND_MARKETS = ["forecast", "SP"]
+BLEND_WEIGHTS = ["model_weight", "market_weight"]
+
+
+def check_blend(blend: dict, source: str) -> dict:
+  for key in ["version", "markets"]:
+    if key not in blend:
+      raise ModelError(f"{source}: missing {key!r}")
+  if not blend["markets"]:
+    raise ModelError(f"{source}: no markets")
+  for market, weights in blend["markets"].items():
+    if market not in BLEND_MARKETS:
+      raise ModelError(f"{source}: unknown market {market!r} (expected one of {BLEND_MARKETS})")
+    for key in BLEND_WEIGHTS:
+      if not isinstance(weights.get(key), (int, float)):
+        raise ModelError(f"{source}: {market} has no number for {key!r}")
+  return blend
