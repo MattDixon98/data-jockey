@@ -14,6 +14,9 @@
 6. Refit on every usable race with that penalty: those are the published
    weights. The test numbers describe how well the method works.
 
+`compare()` runs steps 1-4 for any two sets of inputs on the same split:
+scripts/train_local.py's --add/--drop, to try a change locally.
+
 Models are plain dicts (the weights JSON): each input's name, SQL, mean,
 spread and weight, plus the penalty, date range and test scores.
 """
@@ -50,6 +53,26 @@ class Split:
   @property
   def everything(self) -> pd.DataFrame:
     return pd.concat([self.train, self.validate, self.test], ignore_index=True)
+
+
+@dataclass
+class Tested:
+  """One set of inputs fitted on train + validate and scored on test."""
+
+  inputs: dict[str, str]
+  l2: float
+  validation_scores: dict[float, float]
+  model: dict
+  probs: np.ndarray
+  scores: dict
+
+
+@dataclass
+class Comparison:
+  baseline: Tested
+  variant: Tested
+  races: Races
+  difference: dict  # evaluate.log_loss_difference(variant, baseline)
 
 
 @dataclass
@@ -129,6 +152,38 @@ def date_range(rows: pd.DataFrame) -> dict:
   }
 
 
+def fit_and_test(split: Split, inputs: dict[str, str], aliases: dict[str, str]) -> tuple[Tested, Races]:
+  """Steps 3-4 for one set of inputs."""
+  l2, validation_scores = choose_l2(split, inputs, aliases)
+  standardiser, weights = fit_model(split.train_and_validate, inputs, aliases, l2)
+  model = model_dict(inputs, standardiser, weights)
+  probs, races = model_probabilities(model, split.test, aliases)
+  sp_decimal = split.test["sp_decimal"].to_numpy(dtype=float)
+  scores = evaluate.scorecard(probs, sp_decimal, races)
+  return Tested(inputs, l2, validation_scores, model, probs, scores), races
+
+
+def prepare(raw_rows: pd.DataFrame) -> Split:
+  split = split_by_date(clean_races(raw_rows))
+  if split.validate.empty or split.test.empty:
+    raise ValueError("not enough recent races for the validate and test weeks")
+  return split
+
+
+def compare_on(split: Split, baseline: dict[str, str], variant: dict[str, str], aliases: dict[str, str]) -> Comparison:
+  tested_baseline, races = fit_and_test(split, baseline, aliases)
+  tested_variant, _ = fit_and_test(split, variant, aliases)
+  difference = evaluate.log_loss_difference(tested_variant.probs, tested_baseline.probs, races)
+  return Comparison(tested_baseline, tested_variant, races, difference)
+
+
+def compare(raw_rows: pd.DataFrame, baseline: dict[str, str], variant: dict[str, str], aliases: dict[str, str]) -> tuple[Comparison, str]:
+  """Two sets of inputs on the same split, and a report of the difference."""
+  split = prepare(raw_rows)
+  comparison = compare_on(split, baseline, variant, aliases)
+  return comparison, render_comparison(split, comparison)
+
+
 def train(
   raw_rows: pd.DataFrame,
   inputs: dict[str, str],
@@ -137,36 +192,27 @@ def train(
   version: str,
   created_at: str,
 ) -> TrainingResult:
-  rows = clean_races(raw_rows)
-  split = split_by_date(rows)
-  if split.validate.empty or split.test.empty:
-    raise ValueError("not enough recent races for the validate and test weeks")
-
-  l2, validation_scores = choose_l2(split, inputs, aliases)
-
-  standardiser, weights = fit_model(split.train_and_validate, inputs, aliases, l2)
-  test_model = model_dict(inputs, standardiser, weights)
-  test_probs, test_races = model_probabilities(test_model, split.test, aliases)
-  sp_decimal = split.test["sp_decimal"].to_numpy(dtype=float)
-  candidate_scores = evaluate.scorecard(test_probs, sp_decimal, test_races)
+  split = prepare(raw_rows)
+  candidate, test_races = fit_and_test(split, inputs, aliases)
 
   current_scores = None
   if current is not None:
     current_probs, _ = model_probabilities(current, split.test, aliases)
+    sp_decimal = split.test["sp_decimal"].to_numpy(dtype=float)
     current_scores = evaluate.scorecard(current_probs, sp_decimal, test_races)
-  promote = current_scores is None or candidate_scores["log_loss"] < current_scores["log_loss"]
+  promote = current_scores is None or candidate.scores["log_loss"] < current_scores["log_loss"]
 
-  standardiser, weights = fit_model(split.everything, inputs, aliases, l2)
+  standardiser, weights = fit_model(split.everything, inputs, aliases, candidate.l2)
   model = {
     "version": version,
     "created_at": created_at,
-    "l2": l2,
+    "l2": candidate.l2,
     "trained_on": date_range(split.everything),
     **model_dict(inputs, standardiser, weights),
-    "test": {**date_range(split.test), **{k: v for k, v in candidate_scores.items() if k != "calibration"}},
+    "test": {**date_range(split.test), **{k: v for k, v in candidate.scores.items() if k != "calibration"}},
   }
 
-  report = render_report(model, split, validation_scores, candidate_scores, current, current_scores, promote)
+  report = render_report(model, split, candidate, current, current_scores, promote)
   return TrainingResult(model=model, report=report, promote=promote)
 
 
@@ -179,11 +225,72 @@ def _table(header: list[str], rows: list[list]) -> str:
   return "\n".join(lines)
 
 
+def describe_difference(difference: dict, baseline_label: str) -> str:
+  """e.g. "-0.0123 ± 0.0050 per race against the current inputs: better, beyond noise"."""
+  mean, se = difference["mean"], difference["se"]
+  if se == 0 and mean == 0:
+    verdict = "identical"
+  elif abs(mean) <= 2 * se:
+    verdict = "within noise (less than 2 standard errors)"
+  elif mean < 0:
+    verdict = "better, beyond noise"
+  else:
+    verdict = "worse, beyond noise"
+  return f"{mean:+.4f} ± {se:.4f} (standard error) per race against {baseline_label}, over {difference['races']} races: {verdict}"
+
+
+def periods_table(split: Split, published: dict | None = None) -> str:
+  periods = [
+    ["Train", *date_range(split.train).values()],
+    ["Validate", *date_range(split.validate).values()],
+    ["Test", *date_range(split.test).values()],
+  ]
+  if published is not None:
+    periods.append(["Published weights", *published.values()])
+  return _table(["Period", "From", "To", "Races", "Runners"], periods)
+
+
+def scores_table(columns: list[tuple[str, dict]]) -> str:
+  """Test-week scores side by side; SP and random come from the first column
+  (they don't depend on the model)."""
+  first = columns[0][1]
+  header = [""] + [label for label, _ in columns] + ["SP", "Random"]
+  def row(label: str, key: str, sp_key: str | None, random_key: str | None, fmt: str) -> list:
+    cells = [label] + [format(scores[key], fmt) for _, scores in columns]
+    cells.append(format(first[sp_key], fmt) if sp_key else "")
+    cells.append(format(first[random_key], fmt) if random_key else "")
+    return cells
+  return _table(header, [
+    row("Log-loss per race (all test races)", "log_loss", None, "random_log_loss", ".4f"),
+    row("Log-loss per race (races with SP)", "log_loss_priced", "sp_log_loss_priced", None, ".4f"),
+    row("Top pick won", "top_pick_win_rate", "sp_favourite_win_rate", None, ".1%"),
+  ])
+
+
+def weights_table(model: dict) -> str:
+  by_size = sorted(model["inputs"], key=lambda item: abs(item["weight"]), reverse=True)
+  rows = [
+    [item["name"], f"{item['weight']:+.3f}", f"{item['weight'] / item['std']:+.4f}", f"`{item['sql']}`"]
+    for item in by_size
+  ]
+  return (
+    "Standardised: the effect of a one-spread change in the input, comparable across inputs. "
+    "Per unit: the effect of +1 in the input's own units (e.g. per lb).\n\n"
+    + _table(["Input", "Standardised", "Per unit", "SQL"], rows)
+  )
+
+
+def penalty_table(tested: Tested) -> str:
+  rows = [
+    [l2, f"{score:.4f}", "chosen" if l2 == tested.l2 else ""] for l2, score in tested.validation_scores.items()
+  ]
+  return _table(["L2", "Validation log-loss", ""], rows)
+
+
 def render_report(
   model: dict,
   split: Split,
-  validation_scores: dict[float, float],
-  candidate: dict,
+  candidate: Tested,
   current: dict | None,
   current_scores: dict | None,
   promote: bool,
@@ -192,61 +299,60 @@ def render_report(
     decision = "**Promoted**: first model, nothing to beat."
   elif promote:
     decision = (
-      f"**Promoted**: test log-loss {candidate['log_loss']:.4f} beats the current model "
+      f"**Promoted**: test log-loss {candidate.scores['log_loss']:.4f} beats the current model "
       f"({current['version']}) at {current_scores['log_loss']:.4f}."
     )
   else:
     decision = (
-      f"**Not promoted**: test log-loss {candidate['log_loss']:.4f} doesn't beat the current model "
+      f"**Not promoted**: test log-loss {candidate.scores['log_loss']:.4f} doesn't beat the current model "
       f"({current['version']}) at {current_scores['log_loss']:.4f}."
     )
 
-  periods = [
-    ["Train", *date_range(split.train).values()],
-    ["Validate", *date_range(split.validate).values()],
-    ["Test", *date_range(split.test).values()],
-    ["Published weights", *model["trained_on"].values()],
-  ]
-  penalty_rows = [
-    [l2, f"{score:.4f}", "chosen" if l2 == model["l2"] else ""] for l2, score in validation_scores.items()
-  ]
-
-  score_header = ["", "This model"] + (["Current model"] if current_scores else []) + ["SP", "Random"]
-  def score_row(label: str, key: str, sp_key: str | None, random_key: str | None, fmt: str) -> list:
-    row = [label, format(candidate[key], fmt)]
-    if current_scores:
-      row.append(format(current_scores[key], fmt))
-    row.append(format(candidate[sp_key], fmt) if sp_key else "")
-    row.append(format(candidate[random_key], fmt) if random_key else "")
-    return row
-  score_rows = [
-    score_row("Log-loss per race (all test races)", "log_loss", None, "random_log_loss", ".4f"),
-    score_row("Log-loss per race (races with SP)", "log_loss_priced", "sp_log_loss_priced", None, ".4f"),
-    score_row("Top pick won", "top_pick_win_rate", "sp_favourite_win_rate", None, ".1%"),
-  ]
+  columns = [("This model", candidate.scores)]
+  if current_scores is not None:
+    columns.append(("Current model", current_scores))
 
   calibration_rows = [
     [band["band"], band["runners"], f"{band['predicted']:.1%}", f"{band['actual']:.1%}"]
-    for band in candidate["calibration"]
-  ]
-
-  by_size = sorted(model["inputs"], key=lambda item: abs(item["weight"]), reverse=True)
-  weight_rows = [
-    [item["name"], f"{item['weight']:+.3f}", f"{item['weight'] / item['std']:+.4f}", f"`{item['sql']}`"]
-    for item in by_size
+    for band in candidate.scores["calibration"]
   ]
 
   return "\n\n".join([
     f"# Model {model['version']}",
     decision,
-    "## Data\n\n" + _table(["Period", "From", "To", "Races", "Runners"], periods),
-    "## Penalty (L2), chosen on the validation weeks\n\n" + _table(["L2", "Validation log-loss", ""], penalty_rows),
+    "## Data\n\n" + periods_table(split, model["trained_on"]),
+    "## Penalty (L2), chosen on the validation weeks\n\n" + penalty_table(candidate),
     "## Test weeks\n\nLower log-loss is better. SP has its margin removed with Shin's method.\n\n"
-    + _table(score_header, score_rows),
+    + scores_table(columns),
     "## Calibration (test weeks)\n\nRunners grouped by the probability this model gave them, and how often they won.\n\n"
     + _table(["Predicted", "Runners", "Average predicted", "Actually won"], calibration_rows),
-    "## Weights (published)\n\n"
-    "Standardised: the effect of a one-spread change in the input, comparable across inputs. "
-    "Per unit: the effect of +1 in the input's own units (e.g. per lb).\n\n"
-    + _table(["Input", "Standardised", "Per unit", "SQL"], weight_rows),
+    "## Weights (published)\n\n" + weights_table(model),
+  ]) + "\n"
+
+
+def render_comparison(split: Split, comparison: Comparison) -> str:
+  """train_local.py --add/--drop: is the variant better than the baseline?"""
+  baseline, variant = comparison.baseline, comparison.variant
+  added = [name for name in variant.inputs if name not in baseline.inputs]
+  dropped = [name for name in baseline.inputs if name not in variant.inputs]
+  changed = [
+    name for name in variant.inputs
+    if name in baseline.inputs and variant.inputs[name] != baseline.inputs[name]
+  ]
+  changes = (
+    [f"- added `{name}`: `{variant.inputs[name]}`" for name in added]
+    + [f"- dropped `{name}`" for name in dropped]
+    + [f"- changed `{name}`: `{variant.inputs[name]}`" for name in changed]
+  )
+
+  return "\n\n".join([
+    "# Input comparison",
+    "\n".join(changes) if changes else "No changes to the inputs.",
+    "Variant minus baseline, test log-loss: " + describe_difference(comparison.difference, "the baseline")
+    + ". Negative is better.",
+    "## Data\n\n" + periods_table(split),
+    "## Test weeks\n\nBoth fitted on train + validate with their own penalty "
+    f"(baseline L2 {baseline.l2}, variant L2 {variant.l2}).\n\n"
+    + scores_table([("Variant", variant.scores), ("Baseline", baseline.scores)]),
+    "## Variant weights (fitted on train + validate)\n\n" + weights_table(variant.model),
   ]) + "\n"

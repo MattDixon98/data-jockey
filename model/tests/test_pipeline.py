@@ -5,6 +5,7 @@ import numpy as np
 from conftest import TRUE_WEIGHTS, make_rows
 from data_jockey_model import pipeline
 from data_jockey_model.data import input_aliases
+from data_jockey_model.run import changed_inputs
 
 
 def _train(small_inputs, current=None, seed=2):
@@ -65,3 +66,35 @@ def test_model_json_round_trips(small_inputs):
   assert [i["name"] for i in model["inputs"]] == list(small_inputs)
   for item in model["inputs"]:
     assert set(item) == {"name", "sql", "mean", "std", "weight"}
+
+
+def test_compare_finds_a_dropped_input_hurts(small_inputs):
+  aliases = input_aliases(small_inputs)
+  rows = make_rows(small_inputs, TRUE_WEIGHTS, aliases)
+  variant = changed_inputs(small_inputs, {}, ["a"])
+  comparison, report = pipeline.compare(rows, small_inputs, variant, aliases)
+  difference = comparison.difference
+  assert difference["mean"] > 2 * difference["se"]
+  assert "worse, beyond noise" in report
+  assert "- dropped `a`" in report
+
+
+def test_compare_calls_a_useless_input_noise(small_inputs):
+  # c's true weight is 0: dropping it changes nothing measurable.
+  aliases = input_aliases(small_inputs)
+  rows = make_rows(small_inputs, TRUE_WEIGHTS, aliases)
+  variant = changed_inputs(small_inputs, {}, ["c"])
+  comparison, report = pipeline.compare(rows, small_inputs, variant, aliases)
+  assert abs(comparison.difference["mean"]) < 2 * comparison.difference["se"]
+  assert "within noise" in report
+
+
+def test_changed_inputs_adds_replaces_and_drops(small_inputs):
+  variant = changed_inputs(small_inputs, {"b": "col_b * 2", "d": "col_d"}, ["c"])
+  assert variant == {"a": "col_a", "b": "col_b * 2", "d": "col_d"}
+  try:
+    changed_inputs(small_inputs, {}, ["nope"])
+  except ValueError as error:
+    assert "nope" in str(error)
+  else:
+    raise AssertionError("dropping an unknown input should fail")

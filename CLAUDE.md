@@ -52,6 +52,7 @@ To get real data for `run_local.py`:
 pip install -r requirements-dev.txt     # numpy, scipy, pandas, boto3, pytest (no Spark, no Java)
 pytest                                  # synthetic-race tests (pytest.ini sets testpaths=tests, pythonpath=.)
 python scripts/train_local.py [out dir] # dry run on real data from Athena; writes JSON + report locally, publishes nothing
+python scripts/train_local.py --add "name=SQL" --drop name   # try an input change: baseline vs variant on the same weeks, ± SE
 ./scripts/deploy.sh                     # sam deploy + build/upload the data_jockey_model wheel (needs the glue stack)
 aws glue start-job-run --job-name data-jockey-train-model --profile data-jockey --region eu-west-2
 aws s3 cp s3://data-jockey-clean-<account>/model/current.json -   # the weights in use

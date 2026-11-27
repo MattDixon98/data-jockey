@@ -74,3 +74,40 @@ def run(
     write_text(s3, bucket, f"{model_prefix}{CURRENT}", model_json, "application/json")
   print(f"Published {version} to s3://{bucket}/{model_prefix}versions/ (promoted: {result.promote})")
   return result
+
+
+def changed_inputs(base: dict[str, str], add: dict[str, str], drop: list[str]) -> dict[str, str]:
+  """`base` with inputs dropped by name and added (or replaced) by name -> SQL."""
+  unknown = [name for name in drop if name not in base]
+  if unknown:
+    raise ValueError(f"can't drop unknown inputs: {', '.join(unknown)}")
+  variant = {name: sql for name, sql in base.items() if name not in drop}
+  variant.update(add)
+  return variant
+
+
+def compare_inputs(
+  athena,
+  s3,
+  database: str,
+  athena_output: str,
+  add: dict[str, str],
+  drop: list[str],
+  local_dir: str,
+) -> pipeline.Comparison:
+  """Local only: INPUTS (the baseline) against INPUTS with `add`/`drop`
+  applied, on the same split. Writes a report; publishes nothing."""
+  variant = changed_inputs(INPUTS, add, drop)
+  aliases = input_aliases(INPUTS, variant)
+  rows = query(athena, s3, training_query(database, aliases), athena_output)
+  print(f"Training rows: {len(rows):,}")
+
+  comparison, report = pipeline.compare(rows, INPUTS, variant, aliases)
+  print(report)
+  out = Path(local_dir)
+  out.mkdir(parents=True, exist_ok=True)
+  now = datetime.now(ZoneInfo("Europe/London"))
+  path = out / f"compare-{now:%Y-%m-%d-%H%M%S}.md"
+  path.write_text(report)
+  print(f"Wrote {path} (nothing published)")
+  return comparison
