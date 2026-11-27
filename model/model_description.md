@@ -249,6 +249,12 @@ often as SP expected (100 race-morning winners against 98 expected), so the loss
 the race) were the bookmakers' margin, mostly on longshots. The rule now only flags strong chances at short
 prices (section 5), which broke even on the same races.
 
+**Tried and not used yet (27 Nov):** jockey and trainer form over the last 14 and 30 days, the starting stall
+(a bias learnt per course, surface and distance), first-time headgear and the source's other race-morning
+flags (hot jockey or trainer, wind surgery). None improved the test scores beyond noise with three and a half
+months of data, and adding them all made the model slightly worse; they're kept in the feature table to try
+again with more history. What did help, slightly: letting a big weight gap and a long or short break count
+more than in proportion (squared terms).
+
 **Known gaps:** about three and a half months of data; career records only include runs we've seen (up to 6
-before our data begins); the starting stall and headgear (blinkers, visors) aren't used yet; trainer and jockey
-recent form are still to come.
+before our data begins).
