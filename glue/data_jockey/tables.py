@@ -258,7 +258,25 @@ TABLES: dict[str, str] = {
           code_runs           INT     COMMENT 'Known runs in the same code: flat, or jumps (hurdle, chase, NH flat)',
           code_last_form      DOUBLE  COMMENT 'last_form over runs in the same code only; 0.5 if none',
           code_recent_form    DOUBLE  COMMENT 'recent_form over the last 3 runs in the same code; 0.5 if none',
-          switched_code       BOOLEAN COMMENT 'Last known run was in the other code (flat vs jumps); FALSE on debut'
+          switched_code       BOOLEAN COMMENT 'Last known run was in the other code (flat vs jumps); FALSE on debut',
+          jockey_rides_14d    INT     COMMENT 'Rides in complete UK/IRE races in the 14 days before the race day',
+          jockey_win_rate_14d DOUBLE  COMMENT 'Win rate over those rides, shrunk towards jockey_win_rate (10 rides)',
+          jockey_rides_30d    INT,
+          jockey_win_rate_30d DOUBLE,
+          trainer_rides_14d   INT,
+          trainer_win_rate_14d DOUBLE COMMENT 'Shrunk towards trainer_win_rate (10 runs)',
+          trainer_rides_30d   INT,
+          trainer_win_rate_30d DOUBLE,
+          has_draw            BOOLEAN COMMENT 'Flat race and a stall is known at this snapshot (mostly race morning on)',
+          draw_position       DOUBLE  COMMENT '-0.5 lowest stall to +0.5 highest in this field; 0 if no draw',
+          draw_races          INT     COMMENT 'Earlier complete flat races at this course, surface and distance band',
+          draw_bias           DOUBLE  COMMENT 'Change in form score from lowest to highest stall there, shrunk (20 races); 0 if none',
+          first_time_headgear BOOLEAN COMMENT 'Source insight FIRST_TIME_* (race-morning file on; FALSE before)',
+          wind_surgery        BOOLEAN COMMENT 'Source insight WIND_SURGERY_SINCE_LAST_RUN',
+          ahead_of_handicapper BOOLEAN COMMENT 'Source insight AHEAD_OF_THE_HANDICAPPER',
+          hot_jockey          BOOLEAN COMMENT 'Source insight HOT_JOCKEY',
+          hot_trainer         BOOLEAN COMMENT 'Source insight HOT_TRAINER',
+          travellers_check    BOOLEAN COMMENT 'Source insight TRAVELLERS_CHECK'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,

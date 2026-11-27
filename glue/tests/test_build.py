@@ -208,6 +208,19 @@ def test_as_of_only_counts_earlier_days(spark):
   }
 
 
+def test_as_of_with_days_counts_only_that_window(spark):
+  history = spark.createDataFrame(
+    [("a", "2026-01-01", 1), ("a", "2026-01-08", 1), ("a", "2026-01-09", 0)],
+    "k STRING, d STRING, is_win INT",
+  ).select("k", to_date("d").alias("race_date"), "is_win")
+  targets = spark.createDataFrame([("a", "2026-01-10")], "k STRING, d STRING").select("k", to_date("d").alias("race_date"))
+  aggregates = {"runs": count("is_win"), "wins": spark_sum("is_win")}
+  (row,) = build.as_of(history, targets, ["k"], aggregates, days=2).collect()
+  assert (row.runs, row.wins) == (2, 1)  # the 8th and 9th; the 1st is outside the 2 days
+  (row,) = build.as_of(history, targets, ["k"], aggregates).collect()
+  assert (row.runs, row.wins) == (3, 2)
+
+
 def test_conform_rejects_missing_columns(spark, target_schemas):
   df = spark.createDataFrame([(1,)], "jockey_id BIGINT")
   with pytest.raises(ValueError, match="name"):
@@ -371,6 +384,10 @@ HISTORY_COLUMNS = [
   "going_wins",
   "trainer_runs",
   "trainer_win_rate",
+  "trainer_rides_14d",
+  "trainer_win_rate_14d",
+  "trainer_rides_30d",
+  "trainer_win_rate_30d",
 ]
 
 
@@ -439,6 +456,78 @@ def test_runner_features_form_in_the_same_code(snapshot_tables):
   assert row["code_runs"] == 2
   assert row["code_last_form"] == pytest.approx(1 / 19)
   assert row["code_recent_form"] == pytest.approx((1 / 19 + 14 / 15) / 2)
+
+
+def test_runner_features_insight_flags(tables):
+  # Cinnodin (947829, past file): HOT_JOCKEY and HOT_TRAINER; nobody else has insights.
+  rows = _rows(tables["runner_features"], race_id=UK_RACE)
+  runners = {r["horse_id"]: r for r in _rows(tables["runners"], race_id=UK_RACE)}
+  flagged = [r for r in rows if r["hot_jockey"] or r["hot_trainer"]]
+  assert len(flagged) == 1
+  (row,) = flagged
+  assert row["hot_jockey"] and row["hot_trainer"]
+  assert set(runners[row["horse_id"]]["insights"]) == {"HOT_JOCKEY", "HOT_TRAINER"}
+  for r in rows:
+    assert not (r["first_time_headgear"] or r["wind_surgery"] or r["ahead_of_handicapper"] or r["travellers_check"])
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_runner_features_recent_rates_fall_back_to_the_long_run_rate(request, fixture):
+  rows = request.getfixturevalue(fixture)["runner_features"].collect()
+  for row in rows:
+    for prefix, long_run in [("jockey", row.jockey_win_rate), ("trainer", row.trainer_win_rate)]:
+      for days in (14, 30):
+        rides = row[f"{prefix}_rides_{days}d"]
+        rate = row[f"{prefix}_win_rate_{days}d"]
+        assert 0 <= rate <= 1
+        if rides == 0:
+          assert rate == pytest.approx(long_run)
+  # 946551 (14 Nov) can see 948004 (12 Nov) and 947829 (10 Nov) inside 14 days.
+  if fixture == "snapshot_tables":
+    assert any(r.trainer_rides_14d > 0 for r in rows if r.race_id == UPCOMING_RACE)
+
+
+def test_runner_features_no_draw_outside_flat_races(request):
+  # The fixtures' UK/IRE races are all jumps: no stalls, so no draw features.
+  for fixture in ("tables", "snapshot_tables"):
+    for row in request.getfixturevalue(fixture)["runner_features"].collect():
+      assert not row.has_draw
+      assert row.draw_position == 0.0
+      assert row.draw_bias == 0.0
+
+
+def test_draw_bias_learns_the_slope_of_form_on_stall(spark):
+  """Three earlier flat races at one course where the finishing order is the
+  stall order (stall 1 wins, stall 4 last): form score = draw position + 0.5,
+  a slope of exactly 1. A different distance band at the course sees none."""
+  from data_jockey.build.runner_features import draw_bias, draw_history
+
+  races = spark.createDataFrame(
+    [(race_id, "ENG", "complete", "FLAT", 7, "ALLWEATHER", 1100) for race_id in (1, 2, 3)],
+    "race_id BIGINT, country_code STRING, result_status STRING, race_type STRING, course_id BIGINT, surface STRING, distance_yards INT",
+  )
+  runners = spark.createDataFrame(
+    [
+      (race_id * 10 + stall, race_id, f"2026-11-0{race_id}", "past", "RUNNER", stall, stall, None)
+      for race_id in (1, 2, 3)
+      for stall in (1, 2, 3, 4)
+    ],
+    "ride_id BIGINT, race_id BIGINT, d STRING, snapshot STRING, status STRING, draw INT, finish_position INT, non_finisher_reason STRING",
+  ).withColumn("race_date", to_date("d")).drop("d")
+  history = draw_history(runners, races)
+  band = conversions.distance_band(expr("1100"))
+  targets = spark.createDataFrame(
+    [(7, "ALLWEATHER", "2026-11-10"), (7, "ALLWEATHER", "2026-11-02")],
+    "course_id BIGINT, surface STRING, d STRING",
+  ).select("course_id", "surface", band.alias("distance_band"), to_date("d").alias("race_date"))
+  other_band = targets.select("course_id", "surface", expr("'20f+'").alias("distance_band"), "race_date")
+
+  result = {str(r.race_date): r for r in draw_bias(history, targets.unionByName(other_band)).collect() if r.distance_band != "20f+"}
+  assert result["2026-11-10"].draw_races == 3
+  assert result["2026-11-10"].draw_slope == pytest.approx(1.0)
+  assert result["2026-11-02"].draw_races == 1  # only race 1 is earlier
+  others = [r for r in draw_bias(history, other_band).collect()]
+  assert all(r.draw_slope is None for r in others)
 
 
 def test_runner_features_field_follows_each_snapshot(snapshot_tables):

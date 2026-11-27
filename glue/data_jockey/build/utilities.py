@@ -136,8 +136,15 @@ def rides(races: DataFrame, *race_columns: Column) -> DataFrame:
 # --- Point in time ----------------------------------------------------------
 
 
-def as_of(history: DataFrame, targets: DataFrame, keys: list[str], aggregates: dict[str, Column]) -> DataFrame:
-  """Aggregates over history known before each target's race day.
+def as_of(
+  history: DataFrame,
+  targets: DataFrame,
+  keys: list[str],
+  aggregates: dict[str, Column],
+  days: int | None = None,
+) -> DataFrame:
+  """Aggregates over history known before each target's race day (only the
+  last `days` days before it, if given: 14 = the two weeks up to the day before).
 
   For every distinct (keys, race_date) in `targets`, each aggregate (e.g.
   `spark_sum("is_win")`, `last("rating", ignorenulls=True)`) is evaluated over
@@ -157,10 +164,11 @@ def as_of(history: DataFrame, targets: DataFrame, keys: list[str], aggregates: d
 
   day_number = datediff(col("race_date"), lit("1970-01-01").cast("date"))
   stacked = stacked.withColumn("_day", day_number)
+  first_day = Window.unboundedPreceding if days is None else -days
   earlier_days = (
     Window.partitionBy(*keys)
     .orderBy("_day")
-    .rangeBetween(Window.unboundedPreceding, -1)
+    .rangeBetween(first_day, -1)
   )
 
   columns = [aggregate.over(earlier_days).alias(name) for name, aggregate in aggregates.items()]
