@@ -306,7 +306,7 @@ TABLES: dict[str, str] = {
           book_percentage     DOUBLE  COMMENT 'Sum of 1/odds x 100 before the margin came off, e.g. 118',
           edge                DOUBLE  COMMENT 'model_prob / market_prob - 1',
           expected_value      DOUBLE  COMMENT 'Average return of a 1 unit bet at market_odds if model_prob is right',
-          undervalued         BOOLEAN COMMENT 'expected_value >= 10% and model_prob >= 5%',
+          undervalued         BOOLEAN COMMENT 'expected_value >= 0, model_prob >= 20% and market odds 5/1 or shorter',
           won                 BOOLEAN COMMENT 'Once the race is run; NULL before, and for runners that did not run',
           finish_position     INT
       ) USING iceberg

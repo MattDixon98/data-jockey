@@ -180,20 +180,28 @@ changing, about 30 times.)
 
 **Undervalued.** Take a horse we give a 25% chance, at odds of 5/1 (decimal 6.0). If we're right, a £1 bet
 returns £6 one time in four: £1.50 on average, a 50% profit. That's its **expected value**. A horse is flagged
-when its expected value is at least +10% and we give it at least a 5% chance (so very long shots can't be
-flagged on our say-so alone). Before the race the odds used are the forecast price; after it, SP.
+when three things hold: its expected value is positive (we rate it more likely than the price says), we give it
+at least a 20% chance, and it's priced 5/1 or shorter. Before the race the odds used are the forecast price;
+after it, SP.
 
 For the race above, the chance we'd need to give each horse for it to be flagged:
 
 | SP | Decimal | Market's chance (Shin) | Our chance needed to flag it | Set by |
 |---|---|---|---|---|
-| 6/4 (favourite) | 2.5 | 34.6% | 44.0% | +10% expected value |
-| 5/2 | 3.5 | 24.2% | 31.4% | +10% expected value |
+| 6/4 (favourite) | 2.5 | 34.6% | 40.0% | positive expected value |
+| 5/2 | 3.5 | 24.2% | 28.6% | positive expected value |
 | … | … | … | … | … |
-| 50/1 | 51.0 | 0.7% | 5.0% | 5% minimum |
+| 50/1 | 51.0 | 0.7% | can't be flagged | longer than 5/1 |
 
-e.g. the favourite: 0.44 × 2.5 − 1 = +10%. For the 50/1 shot the expected-value bar alone would be 2.2%, so
-the 5% minimum sets it.
+e.g. the favourite: 0.40 × 2.5 − 1 = 0. A 5/1 shot needs 20%: positive value alone would need 16.7%.
+
+**Why this rule (27 Nov).** The first rule (expected value at least +10%, at least a 5% chance, any price) lost
+32% on the race-morning flags over the first 449 out-of-sample races, and 49% after the race. The flagged horses
+won about as often as SP said they would: the losses were the bookmakers' margin, heaviest on longshots, which is
+also where our odds are least reliable and most of the flags were. Of 96 rules tried on one week and checked on
+the next, the ones that held up in both were strong chances at short prices; this one broke even (−3% over 126
+race-morning bets). That's the end of the losses, not an edge: a proper fix compares our probability with the
+market's more carefully (a blend of the two, planned once there's more data).
 
 ## 6. The scorecard: out-of-sample evaluation
 
@@ -228,16 +236,19 @@ reports:
   ± 1.96 × the spread of the profits / √8). With so few bets one winner more or less changes everything, so
   the range is huge and includes 0%. It narrows as bets accumulate.
 
-## 7. Where it stands (16 Nov 2026)
+## 7. Where it stands (27 Nov 2026)
 
-**The first model** (trained on races from 1 Sep to 12 Nov) scored a log-loss of 1.96 on its test weeks,
-against 1.71 for SP and 2.13 for picking at random: about 40% of the way from guessing to the market.
+**The model** is scored on four test weeks (30 Oct–26 Nov, 920 races): log-loss 1.98, against 1.73 for SP and
+2.17 for picking at random, still about 40% of the way from guessing to the market. Against the race-morning
+forecast price, which is a weaker guide than SP, it's close (2.08 vs 2.03 over 449 races) and ahead on the flat
+(2.21 vs 2.24). The 27 Nov model adds two inputs: whether the horse last ran in the other code (flat vs jumps),
+and how much of the field has a rating, since a rating gap means less when few rivals are rated.
 
-**The first scorecard** (82 races, 13–15 Nov): on the horses we flagged as undervalued, SP has been right and
-we've been wrong. The 227 flagged horses produced 12 winners, against 12.1 that SP predicted and more that our
-own odds predicted, and backing them all at SP lost 53% (95% range −83% to −23%, a real loss rather than bad
-luck). With only three months of history, the model overrates long-odds horses, which is exactly what the
-flagging rule picks out; the rule will be revisited once a few hundred races have been graded.
+**The first scorecard** (449 out-of-sample races, 13–26 Nov): the horses flagged under the first rule won about as
+often as SP expected (100 race-morning winners against 98 expected), so the losses (−32% race-morning, −49% after
+the race) were the bookmakers' margin, mostly on longshots. The rule now only flags strong chances at short
+prices (section 5), which broke even on the same races.
 
-**Known gaps:** only three months of data; career records only include runs we've seen (up to 6 before our
-data begins); the starting stall and headgear (blinkers, visors) aren't used yet.
+**Known gaps:** about three and a half months of data; career records only include runs we've seen (up to 6
+before our data begins); the starting stall and headgear (blinkers, visors) aren't used yet; trainer and jockey
+recent form are still to come.

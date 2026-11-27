@@ -21,7 +21,7 @@ from conftest import CARD_FILES, FIXTURES, MODEL, RACE_FILES, build_tables
 from data_jockey import build, conversions, raw_schemas
 from data_jockey.build.model_odds import model_odds
 from data_jockey.build.model_scorecard import graded_view_rows, model_calibration, model_scorecard
-from data_jockey.build.model_value import MIN_EXPECTED_VALUE, MIN_MODEL_PROB, model_value
+from data_jockey.build.model_value import MAX_MARKET_ODDS_DECIMAL, MIN_EXPECTED_VALUE, MIN_MODEL_PROB, model_value
 from data_jockey.tables import TABLE_KEYS, TABLES
 
 UK_RACE, FR_RACE, US_RACE = 947829, 948441, 948466
@@ -622,7 +622,11 @@ def test_model_value_numbers(request, fixture):
     assert row.book_percentage > 100
     assert row.edge == pytest.approx(row.model_prob / row.market_prob - 1)
     assert row.expected_value == pytest.approx(row.model_prob * row.market_odds_decimal - 1)
-    expected_flag = row.expected_value >= MIN_EXPECTED_VALUE and row.model_prob >= MIN_MODEL_PROB
+    expected_flag = (
+      row.expected_value >= MIN_EXPECTED_VALUE
+      and row.model_prob >= MIN_MODEL_PROB
+      and row.market_odds_decimal <= MAX_MARKET_ODDS_DECIMAL
+    )
     assert row.undervalued == expected_flag
 
 

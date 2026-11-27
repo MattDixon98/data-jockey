@@ -70,7 +70,8 @@ based on past performance.
 - ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
 - ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
   and daily top-pick ROI against the market favourite
-  - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
+  - 🚧 Undervalued rule: tightened to strong chances at 5/1 or shorter (27 Nov), which broke even where the first rule
+    lost; still no edge over the market, a blend with the market's price is planned
 - ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
 - ✅ REST API (OpenAPI docs, HTTP caching, rate limiting) and a GraphQL API serving the daily data
 - ✅ Website live at [mattdixon.uk](https://mattdixon.uk): today's races, our odds and picks, and a track record

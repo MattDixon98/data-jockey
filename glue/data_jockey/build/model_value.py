@@ -20,11 +20,16 @@ from pyspark.sql.functions import sum as spark_sum
 
 from data_jockey import conversions as conv
 
-# Undervalued: a bet at the market price returns at least this much on
-# average if our probability is right, and we give it at least this chance.
-# Starting values; revisit once the scorecard (3f) shows how flags perform.
-MIN_EXPECTED_VALUE = 0.10
-MIN_MODEL_PROB = 0.05
+# Undervalued: a bet at the market price is worth at least this much on
+# average if our probability is right, we give it at least this chance, and
+# the market price is no longer than this. Chosen 27 Nov (athena/flag_analysis.sql,
+# 449 out-of-sample races): the old rule (EV >= 10%, prob >= 5%, any price)
+# lost 32% race-morning, mostly on longshots, where the margin is heaviest and
+# our odds least reliable; strong chances at 5/1 or shorter broke even in both
+# weeks tested. Break-even, not an edge yet.
+MIN_EXPECTED_VALUE = 0.0
+MIN_MODEL_PROB = 0.20
+MAX_MARKET_ODDS_DECIMAL = 6.0  # 5/1
 
 
 def with_market_prices(model_odds: DataFrame, odds_snapshots: DataFrame) -> DataFrame:
@@ -96,9 +101,10 @@ def select_model_value_columns() -> list[Column]:
   )
   edge = col("model_prob") / col("market_prob") - lit(1.0)
   expected_value = col("model_prob") * col("market_odds_decimal") - lit(1.0)
-  is_good_bet = expected_value >= lit(MIN_EXPECTED_VALUE)
-  has_real_chance = col("model_prob") >= lit(MIN_MODEL_PROB)
-  undervalued = is_good_bet & has_real_chance
+  is_value = expected_value >= lit(MIN_EXPECTED_VALUE)
+  is_strong_chance = col("model_prob") >= lit(MIN_MODEL_PROB)
+  is_short_price = col("market_odds_decimal") <= lit(MAX_MARKET_ODDS_DECIMAL)
+  undervalued = is_value & is_strong_chance & is_short_price
 
   return [
     col("ride_id"),
