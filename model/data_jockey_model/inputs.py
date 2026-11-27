@@ -33,6 +33,8 @@ def log_plus_one(column: str) -> str:
 
 JUMPS = flag("race_type <> 'FLAT'")
 HANDICAP = flag("has_handicap")
+# CAST: field_rated and field_size are integers, and integer division truncates.
+RATED_SHARE = "CAST(field_rated AS DOUBLE) / field_size"
 
 INPUTS: dict[str, str] = {
   # Ability
@@ -45,6 +47,8 @@ INPUTS: dict[str, str] = {
   "last_form": "last_form",
   "is_debut": flag("is_debut"),
   "log_days_since_run": log_plus_one("days_since_run"),
+  # Last run in the other code (flat vs jumps): its form says less about this race.
+  "switched_code": flag("switched_code"),
   # Record
   "horse_win_rate": "horse_win_rate",
   "log_horse_runs": log_plus_one("horse_runs"),
@@ -63,4 +67,7 @@ INPUTS: dict[str, str] = {
   "is_debut_x_jumps": f"{flag('is_debut')} * {JUMPS}",
   # In a handicap the weights are set to cancel the rating gap.
   "rating_diff_x_handicap": f"rating_diff * {HANDICAP}",
+  # rating_diff is against the rated runners' average: with few of them rated
+  # it swings, so it counts more the more of the field is rated.
+  "rating_diff_x_rated_share": f"rating_diff * {RATED_SHARE}",
 }
