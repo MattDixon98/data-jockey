@@ -24,7 +24,7 @@ based on past performance.
 4. **Model:** the Glue job builds point-in-time features for every runner (form,
    ratings against the rated field, course/distance/ground record, jockey and
    trainer form, draw bias, race-morning flags). A conditional logit (NumPy, SciPy
-   L-BFGS, L2) is trained monthly in a Glue Python shell job and promoted only if it
+   L-BFGS, L2) is trained weekly in a Glue Python shell job and promoted only if it
    beats the current inputs on held-out weeks (paired log-loss ± standard error).
    Our odds are compared with the market's (margin removed with Shin's method) to
    flag undervalued horses, with a Benter-style blend of the two that switches on
@@ -70,12 +70,12 @@ based on past performance.
 - ✅ Daily crawling to S3, deployed on AWS, with three months of history backfilled
 - ✅ Glue processing into Iceberg tables, rebuilt daily and queryable in Athena
 - ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
-- ✅ Win-odds model: 27 inputs (career record, form, ratings, connections), trained monthly and promoted only when it beats the current inputs on held-out
+- ✅ Win-odds model: 27 inputs (career record, form, ratings, connections), trained weekly and promoted only when it beats the current inputs on held-out
   weeks, pricing every runner daily, with an out-of-sample scorecard and daily top-pick ROI against the market
   favourite
   - ✅ Undervalued rule: strong chances at 5/1 or shorter (27 Nov), which broke even over the first 449
     out-of-sample races where the first rule lost 32%; no edge over the market yet
-  - 🚧 Blend of our odds with the market's: built and fitted monthly, switches on automatically once it has 1,000
+  - 🚧 Blend of our odds with the market's: built and fitted weekly, switches on automatically once it has 1,000
     out-of-sample races and beats the market on the later ones (expected January)
   - 🚧 Draw bias, jockey/trainer recent form and the source's race-morning flags: built, not yet better than noise
     with three and a half months of data; retried as history grows
@@ -90,7 +90,7 @@ based on past performance.
 - `crawlers/`: TypeScript crawlers, Lambda entry point and AWS SAM template
 - `glue/`: PySpark Glue job, the `data_jockey` package it uses (clean tables, features, model odds and
   scorecard), tests, Athena checks and AWS SAM template
-- `model/`: monthly model training and the blend (Glue Python shell job), its `data_jockey_model` package,
+- `model/`: weekly/monthly model training and the blend (Glue Python shell job), its `data_jockey_model` package,
   tests, AWS SAM template and [model_description.md](model/model_description.md); `scripts/train_local.py
   --add/--drop` compares input changes on the same weeks before they go in
 - `backend/`: Django project: read-only models over the daily SQLite file, the command that fetches new ones,

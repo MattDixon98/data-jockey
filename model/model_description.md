@@ -127,7 +127,9 @@ the two. The penalty then treats all features alike, and their weights are compa
 
 ## 4. Training and evaluation
 
-Training runs automatically once a month on AWS, with a time-based split:
+Training runs automatically on AWS every Sunday while the history is short (until April 2027), and on the 1st of
+every month, early in the morning so the daily rebuild uses the new weights straight away. It uses a time-based
+split:
 
 | Races | Used for |
 |---|---|
@@ -209,7 +211,7 @@ probabilities per race like the model's own scores, with a and b fitted on races
 If a comes out near 0, we add nothing the market doesn't know; above 0, the blend leans our way in proportion.
 The flag is then decided from the blended chance. On the first 448 races, against the morning forecast,
 a = 0.48 and b = 0.61, and the blend beat the forecast on the later days; against SP, a ≈ 0 (SP already knows
-what we know). The monthly training publishes it once it has 1,000 races and still beats the market on the
+what we know). The training job publishes it once it has 1,000 races and still beats the market on the
 later ones, and withdraws it if it stops doing so.
 
 ## 6. The scorecard: out-of-sample evaluation

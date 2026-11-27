@@ -205,7 +205,8 @@ the softmax of its runners' scores. `data_jockey_model/`: `inputs.py` (inputs as
 (log-softmax per race, loss + gradient, L-BFGS), `evaluate.py` (log-loss vs SP/random, calibration),
 `pipeline.py` (warm-up, train/validate/test split by date, L2 choice, promotion, report), `aws/` (the
 only AWS code), `run.py` (wires a run). Glue Python shell job `data-jockey-train-model`, monthly on the 1st
-at 08:30; writes `model/versions/<date>.json|.md` and copies to `model/current.json` unless the current model's
+at 05:30, plus weekly on Sundays at 05:00 until 1 Apr 2027 (a second schedule with an `EndDate`: it stops by
+itself, leaving monthly); both before the 07:00 rebuild, which loads the models, so a new one is live that morning; writes `model/versions/<date>.json|.md` and copies to `model/current.json` unless the current model's
 inputs, refitted on the same split (not its stored weights, which may have seen the test weeks), score better on
 the 4 test weeks (`pipeline.compare_on`, also behind `train_local.py --add/--drop`; same inputs = promote). Keep it **Python 3.9-compatible** (`from __future__ import annotations`).
 Features update daily in the rebuild; training only refreshes the weights.
