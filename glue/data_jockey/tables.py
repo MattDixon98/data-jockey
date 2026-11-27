@@ -276,7 +276,11 @@ TABLES: dict[str, str] = {
           ahead_of_handicapper BOOLEAN COMMENT 'Source insight AHEAD_OF_THE_HANDICAPPER',
           hot_jockey          BOOLEAN COMMENT 'Source insight HOT_JOCKEY',
           hot_trainer         BOOLEAN COMMENT 'Source insight HOT_TRAINER',
-          travellers_check    BOOLEAN COMMENT 'Source insight TRAVELLERS_CHECK'
+          travellers_check    BOOLEAN COMMENT 'Source insight TRAVELLERS_CHECK',
+          has_lifetime_stats  BOOLEAN COMMENT 'The source sent career counts for this ride',
+          lifetime_runs       INT     COMMENT 'Career runs before the race (source counts; past rows minus the race); horse_runs if none',
+          lifetime_wins       INT,
+          lifetime_win_rate   DOUBLE  COMMENT 'Shrunk towards 10% (3 runs of prior)'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,

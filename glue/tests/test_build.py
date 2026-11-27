@@ -365,6 +365,10 @@ NULLABLE_FEATURE_COLUMNS = {
 # Built from earlier races only, so the same for every snapshot of a ride.
 HISTORY_COLUMNS = [
   "horse_runs",
+  "has_lifetime_stats",
+  "lifetime_runs",
+  "lifetime_wins",
+  "lifetime_win_rate",
   "code_runs",
   "code_last_form",
   "code_recent_form",
@@ -456,6 +460,22 @@ def test_runner_features_form_in_the_same_code(snapshot_tables):
   assert row["code_runs"] == 2
   assert row["code_last_form"] == pytest.approx(1 / 19)
   assert row["code_recent_form"] == pytest.approx((1 / 19 + 14 / 15) / 2)
+
+
+def test_runner_features_lifetime_counts_leave_out_the_race(snapshot_tables):
+  # Fratas: 31 runs / 6 wins in the t-1 file, 32 / 7 in the past file (it won 948004).
+  rows = {r["snapshot"]: r for r in _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE, horse_id=1082171)}
+  for snapshot in ("t-1", "today", "past"):
+    assert (rows[snapshot]["lifetime_runs"], rows[snapshot]["lifetime_wins"]) == (31, 6), snapshot
+    assert rows[snapshot]["has_lifetime_stats"]
+  assert rows["past"]["lifetime_win_rate"] == pytest.approx((6 + 0.3) / (31 + 3))
+
+
+@pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
+def test_runner_features_lifetime_falls_back_to_known_runs(request, fixture):
+  for row in request.getfixturevalue(fixture)["runner_features"].collect():
+    if not row.has_lifetime_stats:
+      assert (row.lifetime_runs, row.lifetime_wins) == (row.horse_runs, row.horse_wins)
 
 
 def test_runner_features_insight_flags(tables):

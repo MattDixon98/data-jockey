@@ -6,6 +6,14 @@ t-1 crawl of the same race would have seen. The source's own lifetime counts,
 form figures and last_ran_days are not used: in a past file they already
 include the race itself.
 
+Lifetime runs and wins are the source's own career counts (horse_runs only
+knows the runs we've seen, at most about 6 before the crawl began). In a past
+file they already include the race itself, so past rows take it off again (a
+run, and a win if it won): checked 27 Nov against the race-morning file for
+4,382 runners, runs exact for 98.5%, wins exact. Places are left out: the
+source counts each-way places, whose terms depend on the field. Without the
+source's counts, our own known runs and wins stand in.
+
 UK/IRE races only, and only rides that are RUNNERs at that snapshot (the
 field the odds are shared across). Built from every snapshot's file, like
 odds_snapshots: entries come and go between t-3 and the off, and the field
@@ -38,7 +46,7 @@ t-3) gets a neutral value plus a flag column saying so.
 
 from pyspark.sql import Column, DataFrame, Window
 from pyspark.sql.functions import array_contains, avg, coalesce, col, count, datediff, exists, last, least, lit, when
-from pyspark.sql.functions import row_number, transform
+from pyspark.sql.functions import greatest, row_number, transform
 from pyspark.sql.functions import max as spark_max
 from pyspark.sql.functions import sum as spark_sum
 
@@ -78,6 +86,21 @@ def select_target_columns() -> list[Column]:
   finish_position = conv.finish_position(ride.ride_status, position)
   distance_yards = conv.distance_yards(col("race_distance"))
 
+  # Career counts before this race: a past file's already include it.
+  stats = ride.horse_lifetime_stats
+  file_runs = conv.lifetime_stat(stats, "run_count")
+  file_wins = conv.lifetime_stat(stats, "win_count")
+  is_past = col("snapshot") == "past"
+  won_this_race = coalesce(position == 1, lit(False)).cast("int")
+  lifetime_runs = (
+    when(is_past, greatest(file_runs - lit(1), lit(0)))
+    .otherwise(file_runs)
+  )
+  lifetime_wins = (
+    when(is_past, greatest(file_wins - won_this_race, lit(0)))
+    .otherwise(file_wins)
+  )
+
   return [
     ride.ride_reference.id.alias("ride_id"),
     col("snapshot"),
@@ -95,6 +118,8 @@ def select_target_columns() -> list[Column]:
     conv.weight_lbs(ride.handicap).alias("weight_lbs"),
     ride.draw_number.cast("int").alias("draw"),
     transform(ride.insights, lambda insight: insight.type).alias("insight_types"),
+    lifetime_runs.alias("lifetime_runs"),
+    lifetime_wins.alias("lifetime_wins"),
     from_past(finish_position).alias("finish_position"),
   ]
 
@@ -327,6 +352,12 @@ def select_runner_feature_columns() -> list[Column]:
   horse_runs = zero_if_null("horse_runs")
   horse_wins = zero_if_null("horse_wins")
   horse_win_rate = shrunk_win_rate(horse_wins, horse_runs, HORSE_PRIOR_RUNS)
+  # Without the source's counts (~9% of pre-race rows, never in training),
+  # our own known runs and wins are the best stand-in, not zero.
+  has_lifetime_stats = col("lifetime_runs").isNotNull()
+  lifetime_runs = coalesce(col("lifetime_runs"), horse_runs)
+  lifetime_wins = coalesce(col("lifetime_wins"), horse_wins)
+  lifetime_win_rate = shrunk_win_rate(lifetime_wins, lifetime_runs, HORSE_PRIOR_RUNS)
   is_debut = horse_runs == 0
   days_since_run = coalesce(datediff(col("race_date"), col("last_run_date")), lit(0))
   last_form = coalesce(col("last_form"), lit(NEUTRAL_FORM))
@@ -437,6 +468,10 @@ def select_runner_feature_columns() -> list[Column]:
     has_insight("HOT_JOCKEY").alias("hot_jockey"),
     has_insight("HOT_TRAINER").alias("hot_trainer"),
     has_insight("TRAVELLERS_CHECK").alias("travellers_check"),
+    has_lifetime_stats.alias("has_lifetime_stats"),
+    lifetime_runs.alias("lifetime_runs"),
+    lifetime_wins.alias("lifetime_wins"),
+    lifetime_win_rate.alias("lifetime_win_rate"),
   ]
 
 
