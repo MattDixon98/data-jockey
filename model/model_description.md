@@ -247,11 +247,12 @@ reports:
 
 ## 7. Where it stands (27 Nov 2026)
 
-**The model** is scored on four test weeks (30 Oct–26 Nov, 920 races): log-loss 1.98, against 1.73 for SP and
-2.17 for picking at random, still about 40% of the way from guessing to the market. Against the race-morning
-forecast price, which is a weaker guide than SP, it's close (2.08 vs 2.03 over 449 races) and ahead on the flat
-(2.21 vs 2.24). The 27 Nov model adds two inputs: whether the horse last ran in the other code (flat vs jumps),
-and how much of the field has a rating, since a rating gap means less when few rivals are rated.
+**The model** is scored on four test weeks (30 Oct–26 Nov, 920 races): log-loss 1.97, against 1.73 for SP and
+2.17 for picking at random, about 46% of the way from guessing to the market (43% before 27 Nov). Against the
+race-morning forecast price, which is a weaker guide than SP, the 13 Nov model was already close (2.08 vs 2.03
+over 449 races) and ahead on the flat (2.21 vs 2.24). The 27 Nov model adds six inputs: the career win rate and
+number of runs, whether the horse last ran in the other code (flat vs jumps), how much of the field has a rating
+(a rating gap means less when few rivals are rated), and squared weight and days-since-run terms.
 
 **The first scorecard** (449 out-of-sample races, 13–26 Nov): the horses flagged under the first rule won about as
 often as SP expected (100 race-morning winners against 98 expected), so the losses (−32% race-morning, −49% after
@@ -263,7 +264,10 @@ prices (section 5), which broke even on the same races.
 flags (hot jockey or trainer, wind surgery). None improved the test scores beyond noise with three and a half
 months of data, and adding them all made the model slightly worse; they're kept in the feature table to try
 again with more history. What did help, slightly: letting a big weight gap and a long or short break count
-more than in proportion (squared terms).
+more than in proportion (squared terms). What helped most: each horse's **career record** from the source's own
+counts (16 runs on average, against the 3.4 we'd seen ourselves), with the race itself taken off in the results
+file. Its win rate alone improved the test log-loss by 0.011 per race, ten times anything else tried.
 
-**Known gaps:** about three and a half months of data; career records only include runs we've seen (up to 6
-before our data begins).
+**Known gaps:** about three and a half months of data; form (finishing positions, course and distance record)
+still only covers runs we've seen (up to 6 before our data begins); only career wins and runs come from the
+source.

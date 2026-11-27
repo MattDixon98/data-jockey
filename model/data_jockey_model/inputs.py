@@ -58,6 +58,9 @@ INPUTS: dict[str, str] = {
   # Record
   "horse_win_rate": "horse_win_rate",
   "log_horse_runs": log_plus_one("horse_runs"),
+  # Career record from the source's counts (horse_runs only knows runs we've seen).
+  "lifetime_win_rate": "lifetime_win_rate",
+  "log_lifetime_runs": log_plus_one("lifetime_runs"),
   # Suitability
   "won_race_type": won_before("type_wins"),
   "won_course": won_before("course_wins"),

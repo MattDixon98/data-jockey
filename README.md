@@ -70,7 +70,7 @@ based on past performance.
 - ✅ Daily crawling to S3, deployed on AWS, with three months of history backfilled
 - ✅ Glue processing into Iceberg tables, rebuilt daily and queryable in Athena
 - ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
-- ✅ Win-odds model: 25 inputs, trained monthly and promoted only when it beats the current inputs on held-out
+- ✅ Win-odds model: 27 inputs (career record, form, ratings, connections), trained monthly and promoted only when it beats the current inputs on held-out
   weeks, pricing every runner daily, with an out-of-sample scorecard and daily top-pick ROI against the market
   favourite
   - ✅ Undervalued rule: strong chances at 5/1 or shorter (27 Nov), which broke even over the first 449
