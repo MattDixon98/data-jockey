@@ -201,7 +201,16 @@ won about as often as SP said they would: the losses were the bookmakers' margin
 also where our odds are least reliable and most of the flags were. Of 96 rules tried on one week and checked on
 the next, the ones that held up in both were strong chances at short prices; this one broke even (−3% over 126
 race-morning bets). That's the end of the losses, not an edge: a proper fix compares our probability with the
-market's more carefully (a blend of the two, planned once there's more data).
+market's more carefully.
+
+**The blend (built, switches on with more data).** When we disagree with the market, the big disagreements are
+mostly our mistakes. The blend weighs the two: score = a × ln(our chance) + b × ln(the market's), turned into
+probabilities per race like the model's own scores, with a and b fitted on races our models priced out of sample.
+If a comes out near 0, we add nothing the market doesn't know; above 0, the blend leans our way in proportion.
+The flag is then decided from the blended chance. On the first 448 races, against the morning forecast,
+a = 0.48 and b = 0.61, and the blend beat the forecast on the later days; against SP, a ≈ 0 (SP already knows
+what we know). The monthly training publishes it once it has 1,000 races and still beats the market on the
+later ones, and withdraws it if it stops doing so.
 
 ## 6. The scorecard: out-of-sample evaluation
 

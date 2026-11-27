@@ -6,7 +6,10 @@ S3 layout under the clean bucket (`model_prefix`, default model/):
   promoted/<YYYY-MM-DD>.json    every promoted model, kept: the daily rebuild prices
                                 each race with the newest one trained before it
   versions/<YYYY-MM-DD>.json    every candidate, promoted or not
-  versions/<YYYY-MM-DD>.md      its report
+  versions/<YYYY-MM-DD>.md      its report (with the blend's section)
+  blend.json                    the blend (blend.py), only while one is adopted: the
+                                rebuild flags on the blended probability when it's there
+  blend/<YYYY-MM-DD>.json       every adopted blend, kept
 """
 
 from __future__ import annotations
@@ -16,13 +19,15 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
+from data_jockey_model import blend as blending
 from data_jockey_model import pipeline
 from data_jockey_model.aws.athena import query
-from data_jockey_model.aws.s3 import read_json, write_text
+from data_jockey_model.aws.s3 import delete, read_json, write_text
 from data_jockey_model.data import input_aliases, training_query
 from data_jockey_model.inputs import INPUTS
 
 CURRENT = "current.json"
+BLEND = "blend.json"
 
 
 def run(
@@ -55,24 +60,42 @@ def run(
   rows = query(athena, s3, training_query(database, aliases), athena_output)
   print(f"Training rows: {len(rows):,}")
 
-  result = pipeline.train(rows, INPUTS, aliases, current, version, now.isoformat(timespec="seconds"))
+  created_at = now.isoformat(timespec="seconds")
+  result = pipeline.train(rows, INPUTS, aliases, current, version, created_at)
   model_json = json.dumps(result.model, indent=2) + "\n"
-  print(result.report)
+
+  # The blend learns from the races our earlier models priced out of sample.
+  blend_rows = query(athena, s3, blending.blend_query(database), athena_output)
+  blend = blending.train_blend(blend_rows, version, created_at)
+  report = result.report + "\n" + blend.report
+  print(report)
 
   if local_dir is not None:
     out = Path(local_dir)
     out.mkdir(parents=True, exist_ok=True)
     (out / f"{version}.json").write_text(model_json)
-    (out / f"{version}.md").write_text(result.report)
+    (out / f"{version}.md").write_text(report)
+    if blend.blend is not None:
+      (out / f"blend-{version}.json").write_text(json.dumps(blend.blend, indent=2) + "\n")
     print(f"Dry run: wrote {out / version}.json/.md (nothing published)")
     return result
 
   write_text(s3, bucket, f"{model_prefix}versions/{version}.json", model_json, "application/json")
-  write_text(s3, bucket, f"{model_prefix}versions/{version}.md", result.report, "text/markdown")
+  write_text(s3, bucket, f"{model_prefix}versions/{version}.md", report, "text/markdown")
   if result.promote:
     write_text(s3, bucket, f"{model_prefix}promoted/{version}.json", model_json, "application/json")
     write_text(s3, bucket, f"{model_prefix}{CURRENT}", model_json, "application/json")
   print(f"Published {version} to s3://{bucket}/{model_prefix}versions/ (promoted: {result.promote})")
+
+  if blend.blend is not None:
+    blend_json = json.dumps(blend.blend, indent=2) + "\n"
+    write_text(s3, bucket, f"{model_prefix}blend/{version}.json", blend_json, "application/json")
+    write_text(s3, bucket, f"{model_prefix}{BLEND}", blend_json, "application/json")
+    print(f"Blend {version} published for {list(blend.blend['markets'])}")
+  else:
+    # A blend that no longer beats the market shouldn't keep deciding the flags.
+    delete(s3, bucket, f"{model_prefix}{BLEND}")
+    print("No blend adopted: blend.json removed (flags use our probability)")
   return result
 
 

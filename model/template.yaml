@@ -38,6 +38,11 @@ Resources:
                 Resource:
                   - !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}
                   - !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/*
+              - Sid: WithdrawBlend
+                # A blend that stops beating the market is removed (data_jockey_model/run.py).
+                Effect: Allow
+                Action: s3:DeleteObject
+                Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/model/blend.json
               - Sid: ReadJobScript
                 # `sam deploy` uploads the job script to its managed bucket.
                 Effect: Allow
