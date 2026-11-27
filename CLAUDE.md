@@ -179,7 +179,9 @@ streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (de
 race uses the newest model trained only on earlier races; the job reads them from `--model_location`, and if
 that fails it still writes every other table and fails at the end.
 `model_value` puts our probability next to the market's (SP for past rows, the forecast for t-1/today; margin
-removed with Shin's method, `conversions.shin_z`) with the undervalued flag; `model_scorecard` and
+removed with Shin's method, `conversions.shin_z`) with the undervalued flag, decided on `blended_prob` when
+`model/blend.json` exists (softmax of a x ln(ours) + b x ln(market) per market; fitted and published or removed
+by the training job, `model/data_jockey_model/blend.py`, only with 1,000+ out-of-sample races that beat the market); `model_scorecard` and
 `model_calibration` grade it out of sample (`after_race` vs SP, `site_pick` = race-morning row, else t-1;
 profit always at SP).
 
