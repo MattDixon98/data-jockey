@@ -352,6 +352,10 @@ NULLABLE_FEATURE_COLUMNS = {
 # Built from earlier races only, so the same for every snapshot of a ride.
 HISTORY_COLUMNS = [
   "horse_runs",
+  "code_runs",
+  "code_last_form",
+  "code_recent_form",
+  "switched_code",
   "horse_wins",
   "horse_places",
   "days_since_run",
@@ -425,6 +429,18 @@ def test_runner_features_ratings_compare_within_race_type(snapshot_tables):
   assert row["rating_change"] == 3
 
 
+def test_runner_features_form_in_the_same_code(snapshot_tables):
+  # Fratas in 948004 (a hurdle): last ran on the flat (3rd of 11); its known
+  # jumps runs are 2nd of 20 (29 Jul 2026) and 15th of 16 (30 Jul 2025, only
+  # in the t-1/today files' form).
+  (row,) = _rows(snapshot_tables["runner_features"], race_id=SETTLED_RACE, snapshot="t-1", horse_id=1082171)
+  assert row["last_form"] == pytest.approx(2 / 10)
+  assert row["switched_code"]
+  assert row["code_runs"] == 2
+  assert row["code_last_form"] == pytest.approx(1 / 19)
+  assert row["code_recent_form"] == pytest.approx((1 / 19 + 14 / 15) / 2)
+
+
 def test_runner_features_field_follows_each_snapshot(snapshot_tables):
   features = snapshot_tables["runner_features"].where(col("race_id") == UPCOMING_RACE)
   for snapshot in ("t-3", "t-2", "t-1"):
@@ -433,6 +449,8 @@ def test_runner_features_field_follows_each_snapshot(snapshot_tables):
     assert len(rows) == len(raw_runners)
     assert {r.field_size for r in rows} == {len(raw_runners)}
     assert abs(sum(r.rating_diff for r in rows if not r.is_unrated)) < 1e-6
+    rated = sum(1 for r in raw_runners if r.get("official_rating") is not None)
+    assert {r.field_rated for r in rows} == {rated}
 
 
 def test_runner_features_before_jockeys_are_booked(snapshot_tables):

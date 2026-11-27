@@ -253,7 +253,12 @@ TABLES: dict[str, str] = {
           jockey_win_rate     DOUBLE  COMMENT 'Shrunk towards 10%; 10% when no jockey yet',
           trainer_runs        INT,
           trainer_win_rate    DOUBLE  COMMENT 'Shrunk towards 10%',
-          finish_position     INT     COMMENT 'The label: past snapshot only, NULL before'
+          finish_position     INT     COMMENT 'The label: past snapshot only, NULL before',
+          field_rated         INT     COMMENT 'Rated runners at this snapshot (rating_diff is against their average)',
+          code_runs           INT     COMMENT 'Known runs in the same code: flat, or jumps (hurdle, chase, NH flat)',
+          code_last_form      DOUBLE  COMMENT 'last_form over runs in the same code only; 0.5 if none',
+          code_recent_form    DOUBLE  COMMENT 'recent_form over the last 3 runs in the same code; 0.5 if none',
+          switched_code       BOOLEAN COMMENT 'Last known run was in the other code (flat vs jumps); FALSE on debut'
       ) USING iceberg
       PARTITIONED BY (months(race_date))
   """,

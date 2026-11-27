@@ -15,6 +15,8 @@ Horse history is horse_form rebuilt from every snapshot's file (the
 horse_form table only reads each race's most trusted file), so an entry that
 drops out before t-1 still has its form at t-3. Horses hold separate flat,
 hurdle and chase ratings, so ratings are only compared within a race type.
+Form is also kept per code (flat vs jumps, `conversions.race_code`): a jumper's
+placings over hurdles say little about its chances on the flat.
 
 Model inputs are never NULL: a gap (debut, unrated, no jockey booked yet at
 t-3) gets a neutral value plus a flag column saying so.
@@ -96,6 +98,7 @@ def targets(all_race_files: DataFrame, races: DataFrame) -> DataFrame:
   )
   df = df.join(race_info, "race_id")
   df = df.where(col("country_code").isin(conv.UK_IRE_COUNTRY_CODES))
+  df = df.withColumn("race_code", conv.race_code(col("race_type")))
   going_shortcode = coalesce(conv.empty_to_null(col("snapshot_going_shortcode")), col("card_going_shortcode"))
   return df.withColumn("going_group", conv.going_group(going_shortcode))
 
@@ -124,6 +127,7 @@ def horse_history(all_race_files: DataFrame) -> DataFrame:
     "race_date",
     col("race_date").alias("run_date"),
     col("run_type").alias("race_type"),
+    conv.race_code(col("run_type")).alias("race_code"),
     "course_shortcode",
     conv.distance_band(col("distance_yards")).alias("distance_band"),
     conv.going_group(col("going_shortcode")).alias("going_group"),
@@ -139,7 +143,15 @@ def horse_history(all_race_files: DataFrame) -> DataFrame:
     .orderBy("race_date")
     .rowsBetween(-(RECENT_RUNS - 1), Window.currentRow)
   )
-  return df.withColumn("recent_form", avg("form_score").over(recent_runs))
+  recent_code_runs = (
+    Window.partitionBy("horse_id", "race_code")
+    .orderBy("race_date")
+    .rowsBetween(-(RECENT_RUNS - 1), Window.currentRow)
+  )
+  return (
+    df.withColumn("recent_form", avg("form_score").over(recent_runs))
+    .withColumn("code_recent_form", avg("form_score").over(recent_code_runs))
+  )
 
 
 def ride_history(runners: DataFrame, races: DataFrame) -> DataFrame:
@@ -177,6 +189,8 @@ def runs_and_wins(history: DataFrame, rides: DataFrame, keys: list[str], prefix:
 def select_runner_feature_columns() -> list[Column]:
   field = Window.partitionBy("race_id", "snapshot")
   field_size = count(lit(1)).over(field)
+  # A field average over two or three rated runners swings with each one.
+  field_rated = count("official_rating").over(field)
   field_rating = avg("official_rating").over(field)
   field_weight = avg("weight_lbs").over(field)
   is_unrated = col("official_rating").isNull()
@@ -198,6 +212,10 @@ def select_runner_feature_columns() -> list[Column]:
   days_since_run = coalesce(datediff(col("race_date"), col("last_run_date")), lit(0))
   last_form = coalesce(col("last_form"), lit(NEUTRAL_FORM))
   recent_form = coalesce(col("recent_form"), lit(NEUTRAL_FORM))
+  code_last_form = coalesce(col("code_last_form"), lit(NEUTRAL_FORM))
+  code_recent_form = coalesce(col("code_recent_form"), lit(NEUTRAL_FORM))
+  # Last run in the other code (flat vs jumps); FALSE on debut.
+  switched_code = coalesce(col("last_code") != col("race_code"), lit(False))
 
   has_jockey = col("jockey_id").isNotNull()
   jockey_rides = zero_if_null("jockey_runs")
@@ -247,6 +265,11 @@ def select_runner_feature_columns() -> list[Column]:
     trainer_runs.alias("trainer_runs"),
     trainer_win_rate.alias("trainer_win_rate"),
     col("finish_position"),
+    field_rated.alias("field_rated"),
+    zero_if_null("code_runs").alias("code_runs"),
+    code_last_form.alias("code_last_form"),
+    code_recent_form.alias("code_recent_form"),
+    switched_code.alias("switched_code"),
   ]
 
 
@@ -267,6 +290,17 @@ def runner_features(all_race_files: DataFrame, races: DataFrame, runners: DataFr
       "last_run_date": spark_max("run_date"),
       "last_form": last("form_score", ignorenulls=True),
       "recent_form": last("recent_form", ignorenulls=True),
+      "last_code": last("race_code", ignorenulls=True),
+    },
+  )
+  race_code = as_of(
+    horse_runs.where(col("race_code").isNotNull()),
+    df,
+    ["horse_id", "race_code"],
+    {
+      "code_runs": spark_sum("run"),
+      "code_last_form": last("form_score", ignorenulls=True),
+      "code_recent_form": last("code_recent_form", ignorenulls=True),
     },
   )
   race_type = as_of(
@@ -282,6 +316,7 @@ def runner_features(all_race_files: DataFrame, races: DataFrame, runners: DataFr
   history = [
     (horse, ["horse_id"]),
     (race_type, ["horse_id", "race_type"]),
+    (race_code, ["horse_id", "race_code"]),
     (runs_and_wins(horse_runs, df, ["horse_id", "course_shortcode"], "course"), ["horse_id", "course_shortcode"]),
     (runs_and_wins(horse_runs, df, ["horse_id", "distance_band"], "distance"), ["horse_id", "distance_band"]),
     (runs_and_wins(horse_runs, df, ["horse_id", "going_group"], "going"), ["horse_id", "going_group"]),
