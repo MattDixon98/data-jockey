@@ -176,9 +176,9 @@ conf = (
   # Race dates are calendar dates; keep them from shifting with the cluster's zone.
   .set("spark.sql.session.timeZone", "UTC")
   # Plan text (for the UI/listeners, built on every write) is uncapped by default, and the
-  # model tables' plans grow with each promoted model (model_odds is a union of one scoring
-  # branch per model): with two models it ran the 10g driver out of heap on model_calibration
-  # (27 Nov). Same cap as tests/conftest.py; only the description is cut, results are the same.
+  # model tables' plans are long (model_odds has one scoring branch per promoted model;
+  # build_all checkpoints them, see keep=). Same cap as tests/conftest.py; only the
+  # description is cut, results are the same.
   .set("spark.sql.maxPlanStringLength", "1m")
 )
 
@@ -222,7 +222,7 @@ for name, ddl in TABLES.items():
   if missing:
     raise RuntimeError(f"{db}.{name} is missing DDL columns {missing}: ALTER TABLE ... ADD COLUMNS first")
 
-for name, df in build.build_all(racecards, races, models).items():
+for name, df in build.build_all(racecards, races, models, keep=build.checkpoint).items():
   table = f"{db}.{name}"
   clean = build.conform(df, spark.table(table).schema)
   # Full rebuild: replace every row in one commit (the old version stays in

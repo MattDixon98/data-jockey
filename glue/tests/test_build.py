@@ -506,6 +506,24 @@ def test_no_models_means_no_model_odds(spark):
   spark.catalog.clearCache()  # build_all registers caches even though nothing ran
 
 
+def test_build_all_keeps_every_table_others_are_built_from(spark):
+  # A spy instead of a real checkpoint, so nothing runs.
+  cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, CARD_FILES)
+  races = raw_schemas.read_raw(spark, raw_schemas.RACE, RACE_FILES)
+  kept = []
+
+  def keep(df):
+    kept.append(df)
+    return df
+
+  built = build.build_all(cards, races, [MODEL], keep=keep)
+  for name in ["races", "runners", "odds_snapshots", "runner_features", "model_odds", "model_value"]:
+    assert any(df is built[name] for df in kept), name
+  # Plus the graded rows the scorecard and calibration share.
+  assert len(kept) == 7
+  spark.catalog.clearCache()
+
+
 @pytest.mark.parametrize("fixture", ["tables", "snapshot_tables"])
 def test_model_inputs_run_in_spark_and_are_never_null(request, fixture):
   features = request.getfixturevalue(fixture)["runner_features"]

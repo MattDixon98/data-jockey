@@ -68,7 +68,7 @@ def main(raw_dir: str, out_dir: str, model_files: list[str]) -> None:
   # Every table as written; tables not built (model ones without --model) stay
   # empty, like the local_schema table of the same name.
   written_tables = {name: spark.table(f"local_schema.{name}") for name in TABLES}
-  for name, df in build.build_all(cards, races, models).items():
+  for name, df in build.build_all(cards, races, models, keep=build.checkpoint).items():
     clean = build.conform(df, spark.table(f"local_schema.{name}").schema)
     clean.write.mode("overwrite").parquet(str(out / name))
 
