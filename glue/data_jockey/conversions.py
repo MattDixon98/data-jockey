@@ -359,6 +359,19 @@ def race_type(name: Column, country_code: Column) -> Column:
   )
 
 
+def race_code(race_type: Column) -> Column:
+  """FLAT or JUMPS (hurdles, chases and NH flat races: the National Hunt code,
+  whose form and ratings say little about the flat and vice versa); NULL
+  stays NULL."""
+  is_flat = race_type == "FLAT"
+  is_jumps = race_type.isin("HURDLE", "CHASE", "N_H_FLAT")
+  return (
+    when(is_flat, lit("FLAT"))
+    .when(is_jumps, lit("JUMPS"))
+    .otherwise(lit(None))
+  )
+
+
 def result_status(race_stage: Column) -> Column:
   """Whether a race's result can be trusted, from the source's race_stage.
 

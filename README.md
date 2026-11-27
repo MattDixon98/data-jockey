@@ -21,12 +21,14 @@ based on past performance.
 3. **Process:** AWS Glue (PySpark) jobs flatten and clean the raw data (odds to
    decimal, distances to yards, times to seconds) into Apache Iceberg tables
    that can be queried with Athena.
-4. **Model:** the Glue job builds each runner's pre-race features (form, rating,
-   course/distance/ground record, jockey and trainer win rates). A model trained
-   monthly in a Glue Python shell job (NumPy, SciPy) turns them into our own win
-   odds, which are compared with the market's (bookmakers' margin removed) to flag
-   undervalued horses. An out-of-sample scorecard grades the flags and backs our
-   favourite against the market's at SP, by month, day and model version.
+4. **Model:** the Glue job builds point-in-time features for every runner (form,
+   ratings against the rated field, course/distance/ground record, jockey and
+   trainer form, draw bias, race-morning flags). A conditional logit (NumPy, SciPy
+   L-BFGS, L2) is trained weekly in a Glue Python shell job and promoted only if it
+   beats the current inputs on held-out weeks (paired log-loss ± standard error).
+   Our odds are compared with the market's (margin removed with Shin's method) to
+   flag undervalued horses, with a Benter-style blend of the two that switches on
+   once it proves itself; an out-of-sample scorecard grades the flags.
    See [model/model_description.md](model/model_description.md).
 5. **Serve:** the Glue job exports the UK and Irish data to a single SQLite file
    in S3. A container on the web server runs a Django management command that
@@ -68,9 +70,15 @@ based on past performance.
 - ✅ Daily crawling to S3, deployed on AWS, with three months of history backfilled
 - ✅ Glue processing into Iceberg tables, rebuilt daily and queryable in Athena
 - ✅ Odds snapshots: every crawl of a race kept, so odds movement can be tracked
-- ✅ Win-odds model: trained monthly, pricing every runner daily, with an out-of-sample scorecard
-  and daily top-pick ROI against the market favourite
-  - 🚧 Undervalued rule: the first results show no edge over the market yet; to be revisited with more data
+- ✅ Win-odds model: 27 inputs (career record, form, ratings, connections), trained weekly and promoted only when it beats the current inputs on held-out
+  weeks, pricing every runner daily, with an out-of-sample scorecard and daily top-pick ROI against the market
+  favourite
+  - ✅ Undervalued rule: strong chances at 5/1 or shorter (27 Nov), which broke even over the first 449
+    out-of-sample races where the first rule lost 32%; no edge over the market yet
+  - 🚧 Blend of our odds with the market's: built and fitted weekly, switches on automatically once it has 1,000
+    out-of-sample races and beats the market on the later ones (expected January)
+  - 🚧 Draw bias, jockey/trainer recent form and the source's race-morning flags: built, not yet better than noise
+    with three and a half months of data; retried as history grows
 - ✅ Daily SQLite snapshot for the website, with Django models reading it read-only
 - ✅ REST API (OpenAPI docs, HTTP caching, rate limiting) and a GraphQL API serving the daily data
 - ✅ Website live at [mattdixon.uk](https://mattdixon.uk): today's races, our odds and picks, and a track record
@@ -82,8 +90,9 @@ based on past performance.
 - `crawlers/`: TypeScript crawlers, Lambda entry point and AWS SAM template
 - `glue/`: PySpark Glue job, the `data_jockey` package it uses (clean tables, features, model odds and
   scorecard), tests, Athena checks and AWS SAM template
-- `model/`: monthly model training (Glue Python shell job), its `data_jockey_model` package, tests, AWS SAM
-  template and [model_description.md](model/model_description.md)
+- `model/`: weekly/monthly model training and the blend (Glue Python shell job), its `data_jockey_model` package,
+  tests, AWS SAM template and [model_description.md](model/model_description.md); `scripts/train_local.py
+  --add/--drop` compares input changes on the same weeks before they go in
 - `backend/`: Django project: read-only models over the daily SQLite file, the command that fetches new ones,
   the REST and GraphQL APIs (`api/`) and their tests, plus the web server's Dockerfile, Compose file, AWS SAM
   template and setup (`deploy/`: the Caddy image, the server setup script)

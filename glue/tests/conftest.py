@@ -68,7 +68,8 @@ def build_tables(spark, target_schemas, card_files, race_files):
   test runs on a small table instead of re-planning the whole chain."""
   cards = raw_schemas.read_raw(spark, raw_schemas.RACECARD_MEETING, card_files)
   races = raw_schemas.read_raw(spark, raw_schemas.RACE, race_files)
-  built = build.build_all(cards, races, [MODEL])
+  # keep=checkpoint, as the job does: the model tables plan from checkpoints.
+  built = build.build_all(cards, races, [MODEL], keep=build.checkpoint)
   checkpointed = {
     name: build.conform(df, target_schemas[name]).localCheckpoint() for name, df in built.items()
   }

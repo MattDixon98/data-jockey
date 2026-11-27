@@ -17,6 +17,8 @@ After that each table is de-duplicated on its key, keeping the copy from the
 most recent race (and, for names, the most recent non-null value).
 """
 
+from typing import Callable
+
 from pyspark.sql import DataFrame
 
 from data_jockey.build.utilities import as_of, conform, latest, race_files, racecard_files
@@ -36,15 +38,32 @@ from data_jockey.build.runner_features import runner_features
 from data_jockey.build.runners import runners
 from data_jockey.build.trainers import trainers
 
-__all__ = ["as_of", "build_all", "conform", "latest"]
+__all__ = ["as_of", "build_all", "cache", "checkpoint", "conform", "latest"]
 
 
-def build_all(racecards: DataFrame, races_raw: DataFrame, models: list[dict] | None = None) -> dict[str, DataFrame]:
+def cache(df: DataFrame) -> DataFrame:
+  return df.cache()
+
+
+def checkpoint(df: DataFrame) -> DataFrame:
+  """Computed once and kept on the executors, with the query plan behind it
+  dropped: what comes after plans from here, not from the raw JSON."""
+  return df.localCheckpoint(eager=True)
+
+
+def build_all(
+  racecards: DataFrame,
+  races_raw: DataFrame,
+  models: list[dict] | None = None,
+  keep: Callable[[DataFrame], DataFrame] = cache,
+  blend: dict | None = None,
+) -> dict[str, DataFrame]:
   """Every clean table, keyed by table name (unconformed column order).
 
   `models` are the promoted win-odds models (models.usable_models). Without
   them there are no model tables (model_odds, model_value, model_scorecard,
-  model_calibration), and every other table still builds.
+  model_calibration), and every other table still builds. `blend`
+  (models.check_blend) gives model_value its blended_prob; None = no blend.
 
   Takes the raw reads (with source_file) of every snapshot. Everything but
   odds_snapshots and runner_features use only each race's most trusted file.
@@ -54,6 +73,14 @@ def build_all(racecards: DataFrame, races_raw: DataFrame, models: list[dict] | N
   JSON and rebuild runner_features, model_odds and model_value from scratch.
   The data is small (tens of thousands of rows per table), so memory isn't a
   concern.
+
+  `keep` is applied to the built tables others are built from. The default,
+  `cache`, is lazy: nothing runs until a table is written. The job, run_local
+  and the test fixtures pass `checkpoint`, which runs each one there and then
+  and drops its query plan. Without it, every model table carries the plan of
+  the whole chain, which grows with each promoted model (model_odds has one
+  scoring branch per model): with two models the rebuild ran the driver out of
+  memory planning model_calibration (27 Nov).
   """
   all_race_files = races_raw.cache()
   racecards = racecard_files(racecards).cache()
@@ -61,31 +88,32 @@ def build_all(racecards: DataFrame, races_raw: DataFrame, models: list[dict] | N
   tables = {
     "courses": courses(racecards),
     "meetings": meetings(racecards),
-    "races": races(racecards, races_raw).cache(),
-    "runners": runners(races_raw).cache(),
+    "races": keep(races(racecards, races_raw)),
+    "runners": keep(runners(races_raw)),
     "horses": horses(races_raw),
     "jockeys": jockeys(races_raw),
     "trainers": trainers(races_raw),
     "prizes": prizes(races_raw),
     "horse_form": horse_form(races_raw),
-    "odds_snapshots": odds_snapshots(all_race_files).cache(),
+    "odds_snapshots": keep(odds_snapshots(all_race_files)),
     "odds_history": odds_history(races_raw),
   }
   # Model features are built on top of the tables above.
-  tables["runner_features"] = runner_features(
+  tables["runner_features"] = keep(runner_features(
     all_race_files,
     tables["races"],
     tables["runners"],
-  ).cache()
+  ))
   if models:
-    tables["model_odds"] = model_odds(tables["runner_features"], models).cache()
-    tables["model_value"] = model_value(
+    tables["model_odds"] = keep(model_odds(tables["runner_features"], models))
+    tables["model_value"] = keep(model_value(
       tables["model_odds"],
       tables["odds_snapshots"],
       tables["runners"],
       tables["races"],
-    ).cache()
-    graded = graded_view_rows(tables["model_value"], tables["races"]).cache()
+      blend,
+    ))
+    graded = keep(graded_view_rows(tables["model_value"], tables["races"]))
     tables["model_scorecard"] = model_scorecard(graded)
     tables["model_calibration"] = model_calibration(graded)
   return tables

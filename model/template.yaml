@@ -38,6 +38,11 @@ Resources:
                 Resource:
                   - !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}
                   - !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/*
+              - Sid: WithdrawBlend
+                # A blend that stops beating the market is removed (data_jockey_model/run.py).
+                Effect: Allow
+                Action: s3:DeleteObject
+                Resource: !Sub arn:aws:s3:::data-jockey-clean-${AWS::AccountId}/model/blend.json
               - Sid: ReadJobScript
                 # `sam deploy` uploads the job script to its managed bucket.
                 Effect: Allow
@@ -88,16 +93,42 @@ Resources:
                 Action: glue:StartJobRun
                 Resource: !Sub arn:aws:glue:${AWS::Region}:${AWS::AccountId}:job/${TrainModelJob}
 
-  # Monthly, on the 1st after the 07:00 rebuild has refreshed runner_features.
-  # The weights change slowly (a month adds ~1,500 races); the features the
-  # rebuild scores with update every day regardless.
+  # Monthly, on the 1st at 05:30: before the 07:00 rebuild, which loads the
+  # models at its start, so a new model is on the site that morning (training
+  # reads the tables the previous day's rebuild wrote). The weights change slowly
+  # (a month adds ~1,500 races); the features the rebuild scores with update
+  # every day regardless.
   MonthlyTrainSchedule:
     Type: AWS::Scheduler::Schedule
     Properties:
       Name: data-jockey-train-model-monthly
       Description: Retrain the win-odds model on the 1st of each month
-      ScheduleExpression: cron(30 8 1 * ? *)
+      ScheduleExpression: cron(30 5 1 * ? *)
       ScheduleExpressionTimezone: Europe/London
+      FlexibleTimeWindow:
+        Mode: "OFF"
+      Target:
+        Arn: arn:aws:scheduler:::aws-sdk:glue:startJobRun
+        RoleArn: !GetAtt ScheduleRole.Arn
+        Input: !Sub '{"JobName": "${TrainModelJob}"}'
+        RetryPolicy:
+          MaximumRetryAttempts: 0
+
+  # Weekly too while the history is short (each week adds ~7% more races, and
+  # the blend is adopted the week it qualifies), until EndDate: then only the
+  # monthly schedule above runs, with no change needed. Sundays 05:00, before
+  # the 07:00 rebuild like the monthly run, and half an hour ahead of it when the
+  # 1st is a Sunday, so they never overlap (one job run at a time). Each promoted
+  # model adds a scoring branch to the rebuild's model_odds, so weekly for good
+  # would mean ~52 a year.
+  WeeklyTrainSchedule:
+    Type: AWS::Scheduler::Schedule
+    Properties:
+      Name: data-jockey-train-model-weekly
+      Description: Retrain the win-odds model every Sunday until April 2027
+      ScheduleExpression: cron(0 5 ? * SUN *)
+      ScheduleExpressionTimezone: Europe/London
+      EndDate: "2027-04-01T00:00:00.000Z"
       FlexibleTimeWindow:
         Mode: "OFF"
       Target:

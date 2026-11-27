@@ -5,6 +5,8 @@
 - calibration: in each band of predicted probability, how often runners
   actually won (20% shots should win about 20% of the time).
 - top pick: how often each method's most likely runner won.
+- log-loss difference: two models on the same races, compared race by race
+  (paired), with a standard error, so a small gap can be told from noise.
 
 SP has its margin removed with Shin's method, the same as the rebuild's
 model_value table (glue conversions.shin_z), so the numbers agree.
@@ -24,6 +26,16 @@ SHIN_MAX_Z = 0.5
 
 def log_loss(probs: np.ndarray, races: Races) -> float:
   return float(-np.log(probs[races.winner_rows]).mean())
+
+
+def log_loss_difference(probs: np.ndarray, baseline_probs: np.ndarray, races: Races) -> dict:
+  """Mean per-race log-loss of `probs` minus `baseline_probs` (negative =
+  `probs` is better) and its standard error. Paired: each race is scored by
+  both, so the race-to-race luck that dominates log-loss cancels out."""
+  per_race = np.log(baseline_probs[races.winner_rows]) - np.log(probs[races.winner_rows])
+  race_count = len(per_race)
+  se = float(per_race.std(ddof=1) / np.sqrt(race_count)) if race_count > 1 else float("nan")
+  return {"mean": float(per_race.mean()), "se": se, "races": race_count}
 
 
 def random_log_loss(races: Races) -> float:

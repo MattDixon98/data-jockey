@@ -10,8 +10,10 @@ Anything that is the same for every runner in a race (field size, race type,
 going) cancels out in the per-race softmax, so race-level facts only appear
 multiplied by a runner-level input.
 
-Left out of v1 on purpose (see TODO "Model v2 candidates"): draw, headgear,
-the source's insights flags, trainer recent form.
+Tried and left out (27 Nov, scripts/train_local.py comparisons, TODO "Model
+improvements" 4): form per code, jockey/trainer 14/30-day form, the source's
+insights flags (first-time headgear, hot jockey/trainer, wind surgery...) and
+draw bias. Their runner_features columns stay, to retry with more history.
 """
 
 from __future__ import annotations
@@ -33,6 +35,8 @@ def log_plus_one(column: str) -> str:
 
 JUMPS = flag("race_type <> 'FLAT'")
 HANDICAP = flag("has_handicap")
+# CAST: field_rated and field_size are integers, and integer division truncates.
+RATED_SHARE = "CAST(field_rated AS DOUBLE) / field_size"
 
 INPUTS: dict[str, str] = {
   # Ability
@@ -40,14 +44,23 @@ INPUTS: dict[str, str] = {
   "is_unrated": flag("is_unrated"),
   "rating_change": "rating_change",
   "weight_diff": "weight_diff",
+  # Squared: a big weight gap either way counts for more than its size.
+  "weight_diff_sq": "weight_diff * weight_diff",
   # Form
   "recent_form": "recent_form",
   "last_form": "last_form",
   "is_debut": flag("is_debut"),
   "log_days_since_run": log_plus_one("days_since_run"),
+  # Squared, so the effect of a break can bend (short and long breaks differ).
+  "log_days_since_run_sq": f"{log_plus_one('days_since_run')} * {log_plus_one('days_since_run')}",
+  # Last run in the other code (flat vs jumps): its form says less about this race.
+  "switched_code": flag("switched_code"),
   # Record
   "horse_win_rate": "horse_win_rate",
   "log_horse_runs": log_plus_one("horse_runs"),
+  # Career record from the source's counts (horse_runs only knows runs we've seen).
+  "lifetime_win_rate": "lifetime_win_rate",
+  "log_lifetime_runs": log_plus_one("lifetime_runs"),
   # Suitability
   "won_race_type": won_before("type_wins"),
   "won_course": won_before("course_wins"),
@@ -63,4 +76,7 @@ INPUTS: dict[str, str] = {
   "is_debut_x_jumps": f"{flag('is_debut')} * {JUMPS}",
   # In a handicap the weights are set to cancel the rating gap.
   "rating_diff_x_handicap": f"rating_diff * {HANDICAP}",
+  # rating_diff is against the rated runners' average: with few of them rated
+  # it swings, so it counts more the more of the field is rated.
+  "rating_diff_x_rated_share": f"rating_diff * {RATED_SHARE}",
 }

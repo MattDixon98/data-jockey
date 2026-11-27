@@ -127,14 +127,16 @@ the two. The penalty then treats all features alike, and their weights are compa
 
 ## 4. Training and evaluation
 
-Training runs automatically once a month on AWS, with a time-based split:
+Training runs automatically on AWS every Sunday while the history is short (until April 2027), and on the 1st of
+every month, early in the morning so the daily rebuild uses the new weights straight away. It uses a time-based
+split:
 
 | Races | Used for |
 |---|---|
 | The first 3 weeks of data | Nothing (see below) |
 | The next ~6 weeks (train) | Fitting the weights |
 | The 2 weeks after that (validation) | Tuning the penalty strength |
-| The latest 2 weeks (test) | Measuring performance on races it never trained on |
+| The latest 4 weeks (test) | Measuring performance on races it never trained on |
 
 **Why split by time, not at random.** In use, the model always predicts forward from what it has seen. A
 random split would let it train on later races and be tested on earlier ones, which flatters it.
@@ -144,7 +146,11 @@ rates are built from our own collected races, which start on 11 Aug 2026. In the
 jockey sits at the 10% prior, so those weeks would teach the model that jockeys don't matter. We treat the first 3 weeks of data as a warm-up period, which gets left out of the training.
 
 **Refit and promotion.** After testing, the weights are refitted on all the data. Each month's model is
-compared with the one in use on the same recent races; the better of the two is kept. Each run saves its weights and a short report
+compared with the one in use on the same test weeks; the better of the two is kept. The model in use isn't scored
+with its saved weights, which may have been trained on some of those weeks: its inputs are refitted on the same
+train and validation weeks as the new one, so the comparison is between the two sets of inputs on equal terms. The
+report gives the difference race by race with its standard error, saying whether it's beyond noise; the same
+comparison tests a new feature locally before it goes in. Each run saves its weights and a short report
 (dates used, test log-loss against the market and random picks, calibration, every feature's weight).
 
 **No look-ahead in the history.** Upcoming races use the latest model. Past races are recalculated daily but
@@ -176,20 +182,37 @@ changing, about 30 times.)
 
 **Undervalued.** Take a horse we give a 25% chance, at odds of 5/1 (decimal 6.0). If we're right, a £1 bet
 returns £6 one time in four: £1.50 on average, a 50% profit. That's its **expected value**. A horse is flagged
-when its expected value is at least +10% and we give it at least a 5% chance (so very long shots can't be
-flagged on our say-so alone). Before the race the odds used are the forecast price; after it, SP.
+when three things hold: its expected value is positive (we rate it more likely than the price says), we give it
+at least a 20% chance, and it's priced 5/1 or shorter. Before the race the odds used are the forecast price;
+after it, SP.
 
 For the race above, the chance we'd need to give each horse for it to be flagged:
 
 | SP | Decimal | Market's chance (Shin) | Our chance needed to flag it | Set by |
 |---|---|---|---|---|
-| 6/4 (favourite) | 2.5 | 34.6% | 44.0% | +10% expected value |
-| 5/2 | 3.5 | 24.2% | 31.4% | +10% expected value |
+| 6/4 (favourite) | 2.5 | 34.6% | 40.0% | positive expected value |
+| 5/2 | 3.5 | 24.2% | 28.6% | positive expected value |
 | … | … | … | … | … |
-| 50/1 | 51.0 | 0.7% | 5.0% | 5% minimum |
+| 50/1 | 51.0 | 0.7% | can't be flagged | longer than 5/1 |
 
-e.g. the favourite: 0.44 × 2.5 − 1 = +10%. For the 50/1 shot the expected-value bar alone would be 2.2%, so
-the 5% minimum sets it.
+e.g. the favourite: 0.40 × 2.5 − 1 = 0. A 5/1 shot needs 20%: positive value alone would need 16.7%.
+
+**Why this rule (27 Nov).** The first rule (expected value at least +10%, at least a 5% chance, any price) lost
+32% on the race-morning flags over the first 449 out-of-sample races, and 49% after the race. The flagged horses
+won about as often as SP said they would: the losses were the bookmakers' margin, heaviest on longshots, which is
+also where our odds are least reliable and most of the flags were. Of 96 rules tried on one week and checked on
+the next, the ones that held up in both were strong chances at short prices; this one broke even (−3% over 126
+race-morning bets). That's the end of the losses, not an edge: a proper fix compares our probability with the
+market's more carefully.
+
+**The blend (built, switches on with more data).** When we disagree with the market, the big disagreements are
+mostly our mistakes. The blend weighs the two: score = a × ln(our chance) + b × ln(the market's), turned into
+probabilities per race like the model's own scores, with a and b fitted on races our models priced out of sample.
+If a comes out near 0, we add nothing the market doesn't know; above 0, the blend leans our way in proportion.
+The flag is then decided from the blended chance. On the first 448 races, against the morning forecast,
+a = 0.48 and b = 0.61, and the blend beat the forecast on the later days; against SP, a ≈ 0 (SP already knows
+what we know). The training job publishes it once it has 1,000 races and still beats the market on the
+later ones, and withdraws it if it stops doing so.
 
 ## 6. The scorecard: out-of-sample evaluation
 
@@ -224,16 +247,29 @@ reports:
   ± 1.96 × the spread of the profits / √8). With so few bets one winner more or less changes everything, so
   the range is huge and includes 0%. It narrows as bets accumulate.
 
-## 7. Where it stands (16 Nov 2026)
+## 7. Where it stands (27 Nov 2026)
 
-**The first model** (trained on races from 1 Sep to 12 Nov) scored a log-loss of 1.96 on its test weeks,
-against 1.71 for SP and 2.13 for picking at random: about 40% of the way from guessing to the market.
+**The model** is scored on four test weeks (30 Oct–26 Nov, 920 races): log-loss 1.97, against 1.73 for SP and
+2.17 for picking at random, about 46% of the way from guessing to the market (43% before 27 Nov). Against the
+race-morning forecast price, which is a weaker guide than SP, the 13 Nov model was already close (2.08 vs 2.03
+over 449 races) and ahead on the flat (2.21 vs 2.24). The 27 Nov model adds six inputs: the career win rate and
+number of runs, whether the horse last ran in the other code (flat vs jumps), how much of the field has a rating
+(a rating gap means less when few rivals are rated), and squared weight and days-since-run terms.
 
-**The first scorecard** (82 races, 13–15 Nov): on the horses we flagged as undervalued, SP has been right and
-we've been wrong. The 227 flagged horses produced 12 winners, against 12.1 that SP predicted and more that our
-own odds predicted, and backing them all at SP lost 53% (95% range −83% to −23%, a real loss rather than bad
-luck). With only three months of history, the model overrates long-odds horses, which is exactly what the
-flagging rule picks out; the rule will be revisited once a few hundred races have been graded.
+**The first scorecard** (449 out-of-sample races, 13–26 Nov): the horses flagged under the first rule won about as
+often as SP expected (100 race-morning winners against 98 expected), so the losses (−32% race-morning, −49% after
+the race) were the bookmakers' margin, mostly on longshots. The rule now only flags strong chances at short
+prices (section 5), which broke even on the same races.
 
-**Known gaps:** only three months of data; career records only include runs we've seen (up to 6 before our
-data begins); the starting stall and headgear (blinkers, visors) aren't used yet.
+**Tried and not used yet (27 Nov):** jockey and trainer form over the last 14 and 30 days, the starting stall
+(a bias learnt per course, surface and distance), first-time headgear and the source's other race-morning
+flags (hot jockey or trainer, wind surgery). None improved the test scores beyond noise with three and a half
+months of data, and adding them all made the model slightly worse; they're kept in the feature table to try
+again with more history. What did help, slightly: letting a big weight gap and a long or short break count
+more than in proportion (squared terms). What helped most: each horse's **career record** from the source's own
+counts (16 runs on average, against the 3.4 we'd seen ourselves), with the race itself taken off in the results
+file. Its win rate alone improved the test log-loss by 0.011 per race, ten times anything else tried.
+
+**Known gaps:** about three and a half months of data; form (finishing positions, course and distance record)
+still only covers runs we've seen (up to 6 before our data begins); only career wins and runs come from the
+source.

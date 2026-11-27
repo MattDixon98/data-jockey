@@ -52,6 +52,7 @@ To get real data for `run_local.py`:
 pip install -r requirements-dev.txt     # numpy, scipy, pandas, boto3, pytest (no Spark, no Java)
 pytest                                  # synthetic-race tests (pytest.ini sets testpaths=tests, pythonpath=.)
 python scripts/train_local.py [out dir] # dry run on real data from Athena; writes JSON + report locally, publishes nothing
+python scripts/train_local.py --add "name=SQL" --drop name   # try an input change: baseline vs variant on the same weeks, ± SE
 ./scripts/deploy.sh                     # sam deploy + build/upload the data_jockey_model wheel (needs the glue stack)
 aws glue start-job-run --job-name data-jockey-train-model --profile data-jockey --region eu-west-2
 aws s3 cp s3://data-jockey-clean-<account>/model/current.json -   # the weights in use
@@ -156,7 +157,10 @@ streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (de
   via `meetings_flat`/`card_races`/`rides`) live in `utilities.py`. A new table = a new module plus
   an entry in `build_all()` in `__init__.py`. `build_all()` first keeps only each race's most trusted file
   (`race_files()`; **past > today > t-1 > t-2 > t-3**, `conversions.snapshot_rank`) and each date's
-  most trusted racecard, so entries dropped between snapshots don't linger. Results
+  most trusted racecard, so entries dropped between snapshots don't linger. `build_all(keep=build.checkpoint)`
+  (job, run_local, test fixtures) localCheckpoints every table others are built from, so the model tables plan from
+  there, not from the raw JSON (their plans grow with each promoted model; without it two models ran the driver out
+  of memory). The default `keep=cache` stays lazy. A new shared intermediate goes through `keep`. Results
   (finish_position, non_finisher_reason, winning_time) only ever come from past (`from_past()`).
   Then each table is de-duplicated on its key with `latest()` (most recent race wins; for names,
   most recent non-null). `races` and `runners` carry a `snapshot` column.
@@ -175,7 +179,9 @@ streamlit run app.py              # top-pick ROI by day; DATA_JOCKEY_API_URL (de
 race uses the newest model trained only on earlier races; the job reads them from `--model_location`, and if
 that fails it still writes every other table and fails at the end.
 `model_value` puts our probability next to the market's (SP for past rows, the forecast for t-1/today; margin
-removed with Shin's method, `conversions.shin_z`) with the undervalued flag; `model_scorecard` and
+removed with Shin's method, `conversions.shin_z`) with the undervalued flag, decided on `blended_prob` when
+`model/blend.json` exists (softmax of a x ln(ours) + b x ln(market) per market; fitted and published or removed
+by the training job, `model/data_jockey_model/blend.py`, only with 1,000+ out-of-sample races that beat the market); `model_scorecard` and
 `model_calibration` grade it out of sample (`after_race` vs SP, `site_pick` = race-morning row, else t-1;
 profit always at SP).
 
@@ -199,8 +205,10 @@ the softmax of its runners' scores. `data_jockey_model/`: `inputs.py` (inputs as
 (log-softmax per race, loss + gradient, L-BFGS), `evaluate.py` (log-loss vs SP/random, calibration),
 `pipeline.py` (warm-up, train/validate/test split by date, L2 choice, promotion, report), `aws/` (the
 only AWS code), `run.py` (wires a run). Glue Python shell job `data-jockey-train-model`, monthly on the 1st
-at 08:30; writes `model/versions/<date>.json|.md` and copies to `model/current.json` only if it beats
-the current model on the test weeks. Keep it **Python 3.9-compatible** (`from __future__ import annotations`).
+at 05:30, plus weekly on Sundays at 05:00 until 1 Apr 2027 (a second schedule with an `EndDate`: it stops by
+itself, leaving monthly); both before the 07:00 rebuild, which loads the models, so a new one is live that morning; writes `model/versions/<date>.json|.md` and copies to `model/current.json` unless the current model's
+inputs, refitted on the same split (not its stored weights, which may have seen the test weeks), score better on
+the 4 test weeks (`pipeline.compare_on`, also behind `train_local.py --add/--drop`; same inputs = promote). Keep it **Python 3.9-compatible** (`from __future__ import annotations`).
 Features update daily in the rebuild; training only refreshes the weights.
 
 ### APIs (backend/api)

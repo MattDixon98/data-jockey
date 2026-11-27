@@ -28,3 +28,8 @@ def write_text(s3, bucket: str, key: str, text: str, content_type: str) -> None:
     Body=text.encode("utf-8"),
     ContentType=content_type
   )
+
+
+def delete(s3, bucket: str, key: str) -> None:
+  """Remove s3://bucket/key (nothing happens if it isn't there)."""
+  s3.delete_object(Bucket=bucket, Key=key)

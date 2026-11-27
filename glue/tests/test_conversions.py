@@ -323,6 +323,20 @@ def test_race_type(spark, name, country_code, expected):
 
 
 @pytest.mark.parametrize(
+  "race_type, expected",
+  [
+    ("FLAT", "FLAT"),
+    ("HURDLE", "JUMPS"),
+    ("CHASE", "JUMPS"),
+    ("N_H_FLAT", "JUMPS"),
+    (None, None),
+  ],
+)
+def test_race_code(spark, race_type, expected):
+  assert convert(spark, c.race_code, race_type) == expected
+
+
+@pytest.mark.parametrize(
   "raw, expected",
   [
     ("WEIGHEDIN", "complete"),
