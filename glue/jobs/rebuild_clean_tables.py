@@ -175,6 +175,11 @@ conf = (
   .set(f"spark.sql.catalog.{CATALOG}.warehouse", args["warehouse"])
   # Race dates are calendar dates; keep them from shifting with the cluster's zone.
   .set("spark.sql.session.timeZone", "UTC")
+  # Plan text (for the UI/listeners, built on every write) is uncapped by default, and the
+  # model tables' plans grow with each promoted model (model_odds is a union of one scoring
+  # branch per model): with two models it ran the 10g driver out of heap on model_calibration
+  # (27 Nov). Same cap as tests/conftest.py; only the description is cut, results are the same.
+  .set("spark.sql.maxPlanStringLength", "1m")
 )
 
 sc = SparkContext.getOrCreate(conf=conf)
