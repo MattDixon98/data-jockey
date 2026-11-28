@@ -26,7 +26,7 @@ works, and why that method was chosen.
 ## Overview
 
 ```
-race data (collected daily) → clean tables → runner features ──► training (monthly) ──► weights
+race data (collected daily) → clean tables → runner features ──► training (weekly) ───► weights
                                                    │                                       │
                                                    └──────► our odds, every runner (daily) ◄┘
                                                                      │
@@ -37,31 +37,58 @@ race data (collected daily) → clean tables → runner features ──► train
 
 ## 1. Features
 
-Each runner is described by its **features** (around 20 numbers):
+Each runner is described by 29 **features** (the model's inputs, `data_jockey_model/inputs.py`), built from
+the `runner_features` table:
 
-- Its official rating compared with the other runners in the race
-- Its recent form (how close to the front it finished in its last few races)
-- Days since its last run
-- How many times it has run and won before, overall and at this course, distance and ground
-- Its jockey's and trainer's win rates
-- Whether the race is a handicap, and whether it's a flat or jumps race
+| Group | Feature | What it is |
+|---|---|---|
+| Ability | `rating_diff` | Official rating minus the average of the rated runners in the race (lb); 0 if unrated |
+| | `is_unrated` | 1 if the horse has no official rating |
+| | `rating_change` | Rating now minus its rating at its last run of the same race type (lb) |
+| | `weight_diff` | Weight carried minus the race average (lb) |
+| | `weight_diff_sq` | `weight_diff` squared: a big gap either way counts for more than its size |
+| Form | `recent_form` | Average form score over its last 3 runs (0 = won, 1 = last or didn't finish) |
+| | `last_form` | Form score of its last run |
+| | `is_debut` | 1 if it has no known previous run |
+| | `log_days_since_run` | ln(1 + days since its last run) |
+| | `log_days_since_run_sq` | The same, squared, so short and long breaks can differ |
+| | `switched_code` | 1 if its last run was in the other code (flat vs jumps) |
+| Record | `horse_win_rate` | Its win rate over the runs we've seen, shrunk (prior of 3 runs) |
+| | `log_horse_runs` | ln(1 + runs we've seen) |
+| | `lifetime_win_rate` | Its career win rate from the source's own counts, shrunk the same way |
+| | `log_lifetime_runs` | ln(1 + career runs) |
+| Suitability | `won_race_type` | 1 if it has won a race of this type (flat, hurdle, chase) |
+| | `won_course` | 1 if it has won at this course |
+| | `won_distance` | 1 if it has won over this distance band |
+| | `won_going` | 1 if it has won on this ground |
+| Connections | `jockey_win_rate` | The jockey's win rate in our collected races, shrunk (prior of 20 rides) |
+| | `trainer_win_rate` | The trainer's win rate, shrunk the same way |
+| | `has_jockey` | 1 if a jockey is booked (often not yet at t-3) |
+| Interactions | `rating_diff_x_jumps` | `rating_diff` in jumps races only |
+| | `recent_form_x_jumps` | `recent_form` in jumps races only |
+| | `is_debut_x_jumps` | `is_debut` in jumps races only |
+| | `rating_diff_x_handicap` | `rating_diff` in handicaps only |
+| | `rating_diff_x_rated_share` | `rating_diff` × the share of the field that is rated |
+
+The form score of a run is the share of the field it beat, reversed: 0 for the winner, 1 for last (or a
+non-finisher), and in between by position and field size. Days and run counts go through ln(1 + x), because
+the first few matter more than later ones: 7 days against 14 is a bigger difference than 207 against 214.
 
 **Only historical data.** Every feature uses only data from before the race, so the model learns from the
 same information it will have when predicting, and its test results reflect real performance.
 
 **Shrinkage for small samples.** A win rate from a handful of rides is mostly noise: 2 wins from 3 doesn't
-make a 67% jockey. Jockey and trainer win rates are shrunk towards the overall average (10%) by adding 20
-average rides to every record:
+make a 67% jockey. Win rates are shrunk towards the overall average (10%) by adding some average rides to
+every record: 20 for jockeys and trainers, 3 for horses (a horse runs far less often).
 
     rate = (wins + 0.10 × 20) / (rides + 20)
 
 2 from 3 becomes about 17%, no rides at all gives exactly 10%, and as real rides accumulate the observed
 rate dominates. (A Bayesian estimate: a prior, the average, updated by the evidence.)
 
-**Relative features.** The official rating (the racing authorities' ability score, in pounds) only means
-something against the other runners, so the feature is the rating minus the race average. Weight carried is
-treated the same way. Ratings are kept separately per race type (flat, hurdle, chase), so changes are only
-measured within a type.
+**Relative features.** The official rating (the racing authorities' ability score, in pounds) and the weight
+carried only mean something against the other runners, hence the differences from the race average. Horses
+hold separate flat, hurdle and chase ratings, so changes are only measured within a type.
 
 **Missing values: imputation plus an indicator.** Some values don't exist yet (no form for a first-time
 runner, no jockey booked three days out). Gaps are filled with a neutral value (e.g. form 0.5, midway between
@@ -76,14 +103,13 @@ average from an imputed one.
 
        probability of a runner = e^(its score) / the sum of e^(score) for every runner in the race
 
-   Only differences between scores matter: +1 point makes a runner e ≈ 2.7 times as likely to win. Regardless of the number of runners, scores are always normalised to 100%.
+   Only differences between scores matter: +1 point makes a runner e ≈ 2.7 times as likely to win.
 3. **Probabilities into odds.** Decimal odds = 1 / probability: 25% becomes 4.0, shown as 3/1.
 
 **Why this model.** This is a *conditional logit*: logistic regression adapted to a one-winner-per-group
-outcome, and the standard model in racing research. 
-Treating each runner as an independent binary
+outcome, and the standard model in racing research. Treating each runner as an independent binary
 classification gives probabilities that don't sum to 100% per race (a field might total 130%) and need
-rescaling afterwards. It also has few parameters (about 20 weights), suiting a short history, and each weight
+rescaling afterwards. It also has few parameters (29 weights), suiting a short history, and each weight
 is directly interpretable, e.g. "+0.045 to the score per pound of rating advantage".
 
 **Interaction terms.** A feature that's constant within a race (the ground, the race type) shifts every
@@ -134,7 +160,7 @@ split:
 | Races | Used for |
 |---|---|
 | The first 3 weeks of data | Nothing (see below) |
-| The next ~6 weeks (train) | Fitting the weights |
+| Everything in between (train; ~6 weeks on 27 Nov, growing) | Fitting the weights |
 | The 2 weeks after that (validation) | Tuning the penalty strength |
 | The latest 4 weeks (test) | Measuring performance on races it never trained on |
 
@@ -143,15 +169,15 @@ random split would let it train on later races and be tested on earlier ones, wh
 
 **Warm-up period.** Horse history arrives with the race data, going back years, but jockey and trainer win
 rates are built from our own collected races, which start on 11 Aug 2026. In the first weeks almost every
-jockey sits at the 10% prior, so those weeks would teach the model that jockeys don't matter. We treat the first 3 weeks of data as a warm-up period, which gets left out of the training.
+jockey sits at the 10% prior, so those weeks would teach the model that jockeys don't matter; they're left out.
 
-**Refit and promotion.** After testing, the weights are refitted on all the data. Each month's model is
-compared with the one in use on the same test weeks; the better of the two is kept. The model in use isn't scored
-with its saved weights, which may have been trained on some of those weeks: its inputs are refitted on the same
-train and validation weeks as the new one, so the comparison is between the two sets of inputs on equal terms. The
-report gives the difference race by race with its standard error, saying whether it's beyond noise; the same
-comparison tests a new feature locally before it goes in. Each run saves its weights and a short report
-(dates used, test log-loss against the market and random picks, calibration, every feature's weight).
+**Refit and promotion.** Each run's model is compared with the one in use on the same test weeks, and the
+better is kept. The one in use isn't scored with its saved weights, which may have seen those weeks: its
+inputs are refitted on the same train and validation weeks, so the two sets of inputs compete on equal terms.
+The report gives the difference race by race with its standard error, saying whether it's beyond noise; the
+same comparison tests a new feature locally before it goes in. The winner is then refitted on every race after
+the warm-up, and the run saves its weights and a short report (dates used, test log-loss against the market
+and random picks, calibration, every feature's weight).
 
 **No look-ahead in the history.** Upcoming races use the latest model. Past races are recalculated daily but
 keep the model that was live when they were run, so no model ever scores races from its own training data.
@@ -198,8 +224,8 @@ For the race above, the chance we'd need to give each horse for it to be flagged
 e.g. the favourite: 0.40 × 2.5 − 1 = 0. A 5/1 shot needs 20%: positive value alone would need 16.7%.
 
 **Why this rule (27 Nov).** The first rule (expected value at least +10%, at least a 5% chance, any price) lost
-32% on the race-morning flags over the first 449 out-of-sample races, and 49% after the race. The flagged horses
-won about as often as SP said they would: the losses were the bookmakers' margin, heaviest on longshots, which is
+32% on the race-morning flags over the first 449 out-of-sample races (13–26 Nov), and 49% after the race. The
+flagged horses won about as often as SP said they would (100 race-morning winners against 98 expected): the losses were the bookmakers' margin, heaviest on longshots, which is
 also where our odds are least reliable and most of the flags were. Of 96 rules tried on one week and checked on
 the next, the ones that held up in both were strong chances at short prices; this one broke even (−3% over 126
 race-morning bets). That's the end of the losses, not an edge: a proper fix compares our probability with the
@@ -252,23 +278,17 @@ reports:
 **The model** is scored on four test weeks (30 Oct–26 Nov, 920 races): log-loss 1.97, against 1.73 for SP and
 2.17 for picking at random, about 46% of the way from guessing to the market (43% before 27 Nov). Against the
 race-morning forecast price, which is a weaker guide than SP, the 13 Nov model was already close (2.08 vs 2.03
-over 449 races) and ahead on the flat (2.21 vs 2.24). The 27 Nov model adds six inputs: the career win rate and
-number of runs, whether the horse last ran in the other code (flat vs jumps), how much of the field has a rating
-(a rating gap means less when few rivals are rated), and squared weight and days-since-run terms.
-
-**The first scorecard** (449 out-of-sample races, 13–26 Nov): the horses flagged under the first rule won about as
-often as SP expected (100 race-morning winners against 98 expected), so the losses (−32% race-morning, −49% after
-the race) were the bookmakers' margin, mostly on longshots. The rule now only flags strong chances at short
-prices (section 5), which broke even on the same races.
+over 449 races) and ahead on the flat (2.21 vs 2.24). The 27 Nov model adds six inputs (section 1): the career
+win rate and runs, `switched_code`, `rating_diff_x_rated_share` and the two squared terms (a slight help). What
+helped most was the **career record** from the source's own counts (16 runs on average, against the 3.4 we'd
+seen ourselves), with the race itself taken off in the results file: its win rate alone improved the test
+log-loss by 0.011 per race, ten times anything else tried. The first scorecard is in section 5 ("Why this rule").
 
 **Tried and not used yet (27 Nov):** jockey and trainer form over the last 14 and 30 days, the starting stall
 (a bias learnt per course, surface and distance), first-time headgear and the source's other race-morning
 flags (hot jockey or trainer, wind surgery). None improved the test scores beyond noise with three and a half
-months of data, and adding them all made the model slightly worse; they're kept in the feature table to try
-again with more history. What did help, slightly: letting a big weight gap and a long or short break count
-more than in proportion (squared terms). What helped most: each horse's **career record** from the source's own
-counts (16 runs on average, against the 3.4 we'd seen ourselves), with the race itself taken off in the results
-file. Its win rate alone improved the test log-loss by 0.011 per race, ten times anything else tried.
+months of data, and adding them all made the model slightly worse; they're kept in `runner_features` to try
+again with more history.
 
 **Known gaps:** about three and a half months of data; form (finishing positions, course and distance record)
 still only covers runs we've seen (up to 6 before our data begins); only career wins and runs come from the
